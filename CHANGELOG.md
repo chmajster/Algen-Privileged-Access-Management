@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format follows Keep a Changelog, and this project uses semantic versioning when releases are tagged.
+
+## [Unreleased]
+
+### Added
+
+- Installation instructions in `README.md`.
+- Initial changelog with an `Unreleased` section for future updates.
+- Full session monitoring import flow with sessions, command history, log offsets, CSV export, manual grant log import, and UI audit views.
+- Documentation for session monitoring, SSH log locations, mock testing, SSH testing, and production audit recommendations.
+- Gateway SSH mode foundation with gateway models, API, mock connections, command detection, recordings, scheduler termination, UI views, and documentation.
+- Secrets Vault with encrypted/file/external backends, secret metadata API, versions, access logs, rotation jobs, executor/gateway lookup integration, UI views, and documentation.
+- Policy Engine, Risk Engine, Alerts, Server Groups, policy test UI, risk scoring for access requests/grants/commands/gateway logins/secrets, and CSV exports for risk events and alerts.
+- MFA and Identity foundation with local/LDAP/OIDC providers, TOTP enrollment, recovery codes, step-up sessions, auth events, MFA-protected high-risk operations, and identity admin UI.
+
+### Changed
+
+- Translated installation instructions in `README.md` to Polish.
+- Access request, approval, gateway, command logging, and secret-use flows now persist policy decisions and risk metadata.
+- Login, gateway access, secret rotation, manual revoke, recording access, exports, and security policy changes can require MFA step-up according to configuration.
+
+## How To Update
+
+When making a change, add it under `[Unreleased]` using one of these sections:
+
+- `Added` for new features.
+- `Changed` for changes in existing functionality.
+- `Deprecated` for soon-to-be removed features.
+- `Removed` for removed features.
+- `Fixed` for bug fixes.
+- `Security` for vulnerability fixes.
+
+When creating a release, rename `[Unreleased]` to the released version and date, then add a fresh empty `[Unreleased]` section above it.
+
+Example:
+
+```markdown
+## [Unreleased]
+
+## [1.1.0] - 2026-07-02
+
+### Added
+
+- New access request filter.
+```

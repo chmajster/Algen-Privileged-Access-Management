@@ -1,0 +1,17 @@
+services:
+  pam-lite:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - pam_lite_data:/app/data
+      - ./frontend:/app/frontend:ro
+    environment:
+      DATABASE_URL: sqlite:////app/data/pam_lite.db
+
+volumes:
+  pam_lite_data:
