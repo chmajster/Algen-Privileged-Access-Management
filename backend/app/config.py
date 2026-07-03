@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     pam_session_log_import_enabled: bool = True
     pam_session_log_dir: str = "/var/log/pam-lite"
     pam_default_admin_user: str = "admin"
+    pam_default_admin_email: str = "admin@example.local"
     pam_default_admin_password: str = "admin123"
     pam_access_mode: str = "direct"
     pam_gateway_enabled: bool = True

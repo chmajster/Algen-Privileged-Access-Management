@@ -14,6 +14,7 @@ const state = {
 
 const navItems = [
   ["dashboard", "Dashboard", "bi-speedometer2", "Privileged access overview", ["user", "approver", "admin"]],
+  ["adminPanel", "Admin Panel", "bi-tools", "Application and policy management", ["admin"]],
   ["servers", "Servers", "bi-hdd-network", "Linux targets", ["user", "approver", "admin"]],
   ["users", "Users", "bi-people", "Accounts and SSH keys", ["admin"]],
   ["requests", "Access Requests", "bi-journal-check", "Requests and approvals", ["user", "approver", "admin"]],
@@ -233,6 +234,52 @@ function renderDashboard() {
       ${state.user.role === "admin" ? `<div class="col-xl-6">${table(["Import Error", "Grant", "Time"], importErrors.map((a) => `<tr><td class="wrap">${escapeHtml(a.message)}</td><td>${linkId("grant", a.grant_id)}</td><td>${fmt(a.created_at)}</td></tr>`))}</div>` : ""}
       ${state.user.role === "admin" ? `<div class="col-12">${table(["Action", "Message", "Time"], latestAudit.map((a) => `<tr><td>${escapeHtml(a.action)}</td><td class="wrap">${escapeHtml(a.message)}</td><td>${fmt(a.created_at)}</td></tr>`))}</div>` : ""}
     </div>`;
+}
+
+function renderAdminPanel() {
+  const policyCount = (state.data.policies || []).length;
+  const enabledPolicies = (state.data.policies || []).filter((p) => p.enabled).length;
+  const policyRuleCount = (state.data.policyRules || []).length;
+  const activeUsers = (state.data.users || []).filter((u) => u.is_active).length;
+  const openAlerts = (state.data.alerts || []).filter((a) => a.status === "open").length;
+  const sections = [
+    ["Users", "users", "bi-people", activeUsers],
+    ["Policies", "policies", "bi-sliders", `${enabledPolicies}/${policyCount}`],
+    ["Policy Engine", "policyRules", "bi-shield-check", policyRuleCount],
+    ["Policy Test", "policyTest", "bi-clipboard-check", ""],
+    ["Server Groups", "serverGroups", "bi-collection", (state.data.serverGroups || []).length],
+    ["Secrets", "secrets", "bi-shield-lock", (state.data.secrets || []).length],
+    ["Secret Rotation", "secretRotation", "bi-arrow-clockwise", (state.data.rotationJobs || []).length],
+    ["Alerts", "alerts", "bi-exclamation-triangle", openAlerts],
+    ["Identity Admin", "identityAdmin", "bi-person-badge", (state.data.identityUsers || []).length],
+    ["Audit Logs", "audit", "bi-clipboard-data", (state.data.audit || []).length],
+    ["Runtime Settings", "settings", "bi-gear", ""],
+    ["Auth Events", "authEvents", "bi-clock-history", (state.data.authEvents || []).length],
+  ];
+  $("#content").innerHTML = `
+    <section class="metric-grid">
+      <div class="metric"><div class="value">${activeUsers}</div><div class="label">Active users</div></div>
+      <div class="metric"><div class="value">${enabledPolicies}</div><div class="label">Enabled policies</div></div>
+      <div class="metric"><div class="value">${policyRuleCount}</div><div class="label">Policy rules</div></div>
+      <div class="metric"><div class="value">${openAlerts}</div><div class="label">Open alerts</div></div>
+    </section>
+    <div class="table-wrap p-3">
+      <div class="row g-2">
+        ${sections.map(([label, view, icon, count]) => `
+          <div class="col-sm-6 col-xl-4">
+            <button class="btn btn-outline-primary w-100 d-flex justify-content-between align-items-center" data-admin-view="${view}">
+              <span><i class="bi ${icon} me-2"></i>${label}</span>
+              <span>${escapeHtml(count)}</span>
+            </button>
+          </div>`).join("")}
+      </div>
+    </div>`;
+  document.querySelectorAll("[data-admin-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.adminView;
+      render();
+    });
+  });
 }
 
 function renderServers() {
@@ -632,7 +679,7 @@ function renderSettings() {
 function render() {
   renderNav();
   setTitle();
-  const views = { dashboard: renderDashboard, servers: renderServers, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
+  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
   (views[state.view] || renderDashboard)();
 }
 

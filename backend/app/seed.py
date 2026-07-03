@@ -14,7 +14,7 @@ DEMO_SSH_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPamLiteDemoKey user@pam
 
 def seed_demo_data(db: Session) -> None:
     users = [
-        ("admin", "admin@example.local", settings.pam_default_admin_password, "admin"),
+        (settings.pam_default_admin_user, settings.pam_default_admin_email, settings.pam_default_admin_password, "admin"),
         ("approver", "approver@example.local", "approver123", "approver"),
         ("user", "user@example.local", "user123", "user"),
     ]
@@ -152,7 +152,7 @@ def seed_demo_data(db: Session) -> None:
         db.add(event)
     if not db.query(Alert).filter(Alert.title == "Demo secret rotation failed").first():
         db.add(Alert(alert_type="secret", severity="high", status="open", title="Demo secret rotation failed", message="A demo secret rotation failed without exposing secret material."))
-    admin = db.query(User).filter(User.username == "admin").first()
+    admin = db.query(User).filter(User.username == settings.pam_default_admin_user).first()
     if admin and not db.query(AuthEvent).first():
         db.add(AuthEvent(user_id=admin.id, provider="local", event_type="login_success", success=True, message="Demo login event"))
         db.add(AuthEvent(user_id=admin.id, provider="local", event_type="mfa_required", success=True, message="Demo MFA enrollment prompt"))

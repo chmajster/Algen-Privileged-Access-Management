@@ -13,6 +13,20 @@ Linux PAM Lite is a small Privileged Access Management web app for time-boxed SS
 
 ## Instalacja
 
+### Szybki instalator Linux
+
+Na Linuxie mozesz uzyc instalatora z trybem UI albo cichej instalacji CLI:
+
+```bash
+./install.sh
+./install.sh --silent --yes --user --no-service --admin-user admin --admin-password 'zmien-to-haslo'
+./install.sh --silent --yes --system --service --install-dir /opt/algen-pam
+```
+
+Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
+
+Instalator tworzy lokalne konto admina aplikacji. Po zalogowaniu admin ma dostep do panelu zarzadzania uzytkownikami, policy, policy engine, sekretami, alertami, tozsamoscia, ustawieniami i audit logami.
+
 ### Wymagania
 
 - Python 3.12 do uruchomienia lokalnego.
