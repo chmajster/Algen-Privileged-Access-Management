@@ -77,7 +77,7 @@ def _registration_out(db: Session, server: Server) -> dict:
 
 def _https_ok(request: Request) -> bool:
     forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
-    return request.url.scheme == "https" or forwarded == "https" or settings.pam_executor_mode == "mock"
+    return request.url.scheme == "https" or forwarded == "https"
 
 
 @register_router.post("/register", response_model=schemas.ServerRegistrationOut, status_code=status.HTTP_201_CREATED)
@@ -211,6 +211,8 @@ def _can_approve(db: Session, user: User, server: Server) -> bool:
 
 @approval_router.get("", response_model=list[schemas.ServerRegistrationOut])
 def list_registrations(registration_status: str | None = Query(default="pending_approval"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not is_global_admin(current_user) and not any(has_permission(db, current_user, "servers.approve_registration", group_id=item.server_group_id) for item in active_memberships(db, current_user)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing servers.approve_registration permission")
     query = db.query(Server).filter(Server.registration_source == "api")
     if registration_status:
         query = query.filter(Server.registration_status == registration_status)

@@ -2,8 +2,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import schemas
@@ -33,6 +35,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Linux PAM Lite", version="1.0.0", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def redact_validation_secrets(_: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    for error in errors:
+        if any(str(part).lower() in {"password", "secret", "token", "private_key"} for part in error.get("loc", ())):
+            error["input"] = "[REDACTED]"
+            error.pop("ctx", None)
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 @app.middleware("http")

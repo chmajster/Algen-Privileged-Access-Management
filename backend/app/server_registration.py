@@ -65,10 +65,10 @@ def test_password_connection(*, address: str, port: int, username: str, password
     client = paramiko.SSHClient()
     known_hosts = Path(settings.pam_registration_known_hosts_path)
     try:
+        if host_key_policy == "strict":
+            client.load_system_host_keys()
         if known_hosts.exists():
             client.load_host_keys(str(known_hosts))
-        elif host_key_policy == "strict":
-            client.load_system_host_keys()
         if host_key_policy == "trust_on_first_use":
             known_hosts.parent.mkdir(parents=True, exist_ok=True)
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

@@ -12,7 +12,7 @@ from app.database import SessionLocal
 def auth_headers(client, username="admin", password="admin123"):
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200, response.text
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+    return {"Authorization": f"Bearer {response.json()['access_token']}", "X-Forwarded-Proto": "https"}
 
 
 def registration_payload(**updates):
@@ -238,3 +238,18 @@ def test_host_key_mismatch_blocks_registration_without_private_error(client, mon
     assert response.status_code == 400
     assert response.headers["x-connection-status"] == "host_key_mismatch"
     assert "NeverStoreThisPlaintext" not in response.text
+
+
+def test_invalid_password_is_redacted_from_validation_error(client):
+    payload = registration_payload(password="")
+    response = client.post("/api/servers/register", headers=auth_headers(client), json=payload)
+    assert response.status_code == 422
+    assert '"input":"[REDACTED]"' in response.text
+
+
+def test_registration_requires_https(client):
+    headers = auth_headers(client)
+    headers.pop("X-Forwarded-Proto")
+    response = client.post("/api/servers/register", headers=headers, json=registration_payload())
+    assert response.status_code == 400
+    assert response.json()["detail"] == "HTTPS is required"

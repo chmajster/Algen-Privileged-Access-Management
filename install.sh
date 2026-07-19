@@ -11,9 +11,12 @@ readonly INSTALLER_VERSION="2.0.0"
 readonly DEFAULT_REPO="https://github.com/chmajster/Algen-Privileged-Access-Management"
 readonly DEFAULT_BRANCH="main"
 readonly REQUIRED_PYTHON_MINOR=12
+readonly EXISTING_ACTION_TIMEOUT=5
 
 MODE=""                       # install|update|reinstall|backup|remove-app|uninstall
 MODE_EXPLICIT=0
+MODE_SELECTED_INTERACTIVELY=0
+AUTO_UPDATE_SELECTED=0
 SCOPE=""
 SCOPE_EXPLICIT=0
 SILENT=0
@@ -22,8 +25,10 @@ DRY_RUN=0
 VERBOSE=0
 SERVICE_CHOICE=""
 DESKTOP_CHOICE=0
+DESKTOP_CHOICE_EXPLICIT=0
 AUTO_PORT=0
 INSTALL_DIR=""
+INSTALL_DIR_EXPLICIT=0
 REPO="$DEFAULT_REPO"
 BRANCH="$DEFAULT_BRANCH"
 BRANCH_EXPLICIT=0
@@ -38,6 +43,8 @@ ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-}"
 ADMIN_PASSWORD=""
 ADMIN_PASSWORD_GENERATED=0
 ADMIN_PASSWORD_SUPPLIED=0
+ADMIN_USER_EXPLICIT=0
+ADMIN_EMAIL_EXPLICIT=0
 LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
 KEEP_CONFIG=0
 KEEP_DATA=0
@@ -50,6 +57,14 @@ STAGE_ROOT=""; STAGED_APP=""; RELEASE_BACKUP=""; DIAGNOSTIC_PATH=""
 STATE_BACKUP_DIR=""
 TEMP_SERVER_PID=""; SERVICE_WAS_ACTIVE=0; SERVICE_WAS_ENABLED=0
 MUTATIONS_STARTED=0
+CURRENT_STEP="Uruchamianie instalatora"
+ERROR_REPORTED=0
+
+if [[ -t 2 && "$SILENT" -eq 0 ]]; then
+  COLOR_BLUE=$'\033[34m'; COLOR_GREEN=$'\033[32m'; COLOR_YELLOW=$'\033[33m'; COLOR_RED=$'\033[31m'; COLOR_BOLD=$'\033[1m'; COLOR_RESET=$'\033[0m'
+else
+  COLOR_BLUE=""; COLOR_GREEN=""; COLOR_YELLOW=""; COLOR_RED=""; COLOR_BOLD=""; COLOR_RESET=""
+fi
 
 # ---- logging, errors, and cleanup ------------------------------------------
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -58,20 +73,58 @@ emit() {
   [[ "$level" != DEBUG || "$VERBOSE" -eq 1 ]] || return 0
   local line
   line="[$(timestamp)] [$level] $*"
-  printf '%s\n' "$line" >&2
+  local color=""
+  case "$level" in INFO) color="$COLOR_BLUE";; OK) color="$COLOR_GREEN";; WARN) color="$COLOR_YELLOW";; ERROR) color="$COLOR_RED";; esac
+  [[ "$SILENT" -eq 0 ]] || color=""
+  printf '%b%s%b\n' "$color" "$line" "$COLOR_RESET" >&2
   if [[ -n "$LOG_FILE" && -f "$LOG_FILE" && "$DRY_RUN" -eq 0 ]]; then
     printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null || true
   fi
 }
 info() { emit INFO "$@"; }
+ok() { emit OK "$@"; }
 warn() { emit WARN "$@"; }
 debug() { emit DEBUG "$@"; }
+section() {
+  CURRENT_STEP="$1"
+  printf '\n%b==> %s%b\n' "$COLOR_BOLD" "$1" "$COLOR_RESET" >&2
+}
+banner() {
+  [[ "$SILENT" -eq 0 ]] || return 0
+  cat >&2 <<'EOF'
+    _    _                    ____   _    __  __
+   / \  | | __ _  ___ _ __  |  _ \ / \  |  \/  |
+  / _ \ | |/ _` |/ _ \ '_ \ | |_) / _ \ | |\/| |
+ / ___ \| | (_| |  __/ | | ||  __/ ___ \| |  | |
+/_/   \_\_|\__, |\___|_| |_||_| /_/   \_\_|  |_|
+           |___/
+
+Algen Privileged Access Management
+Bezpieczny instalator Linux
+EOF
+}
 die() {
+  ERROR_REPORTED=1
   emit ERROR "$*"
-  [[ -z "$LOG_FILE" ]] || printf 'Log: %s\n' "$LOG_FILE" >&2
-  [[ -z "$DIAGNOSTIC_PATH" ]] || printf 'Diagnostic files: %s\n' "$DIAGNOSTIC_PATH" >&2
-  printf 'Fix the reported condition and run the same command again.\n' >&2
+  printf '\nOperacja nie powiodła się.\n\nEtap:\n  %s\n' "$CURRENT_STEP" >&2
+  [[ -z "$LOG_FILE" ]] || printf '\nLog:\n  %s\n' "$LOG_FILE" >&2
+  [[ -z "$DIAGNOSTIC_PATH" ]] || printf '\nPliki diagnostyczne:\n  %s\n' "$DIAGNOSTIC_PATH" >&2
+  if [[ "$SCOPE" == user ]]; then
+    printf '\nSprawdź:\n  systemctl --user status algen-pam --no-pager -l\n  journalctl --user -u algen-pam -n 100 --no-pager\n' >&2
+  else
+    printf '\nSprawdź:\n  systemctl status algen-pam --no-pager -l\n  journalctl -u algen-pam -n 100 --no-pager\n' >&2
+  fi
   exit 1
+}
+on_error() {
+  local line="$1" code="$2"
+  [[ "$ERROR_REPORTED" -eq 0 ]] || return "$code"
+  ERROR_REPORTED=1
+  emit ERROR "Nieoczekiwany błąd w linii $line (kod $code)."
+  printf '\nOperacja nie powiodła się.\n\nEtap:\n  %s\n' "$CURRENT_STEP" >&2
+  [[ -z "$LOG_FILE" ]] || printf '\nLog:\n  %s\n' "$LOG_FILE" >&2
+  [[ -z "$DIAGNOSTIC_PATH" ]] || printf '\nPliki diagnostyczne:\n  %s\n' "$DIAGNOSTIC_PATH" >&2
+  return "$code"
 }
 cleanup() {
   local status=$?
@@ -86,9 +139,10 @@ cleanup() {
     fi
   fi
 }
-interrupted() { warn "Operation interrupted; cleanup is running."; exit 130; }
+interrupted() { warn "Operacja przerwana; trwa bezpieczne sprzątanie."; exit 130; }
 trap cleanup EXIT
 trap interrupted INT TERM
+trap 'on_error "$LINENO" "$?"' ERR
 
 usage() {
   cat <<'EOF'
@@ -149,18 +203,18 @@ parse_args() {
       --auto-port) AUTO_PORT=1 ;;
       --user) [[ -z "$SCOPE" || "$SCOPE" == user ]] || die "Use either --user or --system."; SCOPE=user; SCOPE_EXPLICIT=1 ;;
       --system) [[ -z "$SCOPE" || "$SCOPE" == system ]] || die "Use either --user or --system."; SCOPE=system; SCOPE_EXPLICIT=1 ;;
-      --install-dir) need_value "$@"; shift; INSTALL_DIR="$1" ;;
+      --install-dir) need_value "$@"; shift; INSTALL_DIR="$1"; INSTALL_DIR_EXPLICIT=1 ;;
       --service) [[ "$SERVICE_CHOICE" != 0 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=1 ;;
       --no-service) [[ "$SERVICE_CHOICE" != 1 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=0 ;;
-      --desktop) DESKTOP_CHOICE=1 ;;
-      --no-desktop) DESKTOP_CHOICE=0 ;;
+      --desktop) DESKTOP_CHOICE=1; DESKTOP_CHOICE_EXPLICIT=1 ;;
+      --no-desktop) DESKTOP_CHOICE=0; DESKTOP_CHOICE_EXPLICIT=1 ;;
       --port) need_value "$@"; shift; APP_PORT="$1"; APP_PORT_EXPLICIT=1 ;;
       --gateway-port) need_value "$@"; shift; GATEWAY_PORT="$1"; GATEWAY_PORT_EXPLICIT=1 ;;
       --repo) need_value "$@"; shift; REPO="$1" ;;
       --branch) need_value "$@"; shift; BRANCH="$1"; BRANCH_EXPLICIT=1 ;;
       --tag) need_value "$@"; shift; TAG="$1" ;;
-      --admin-user) need_value "$@"; shift; ADMIN_USER="$1" ;;
-      --admin-email) need_value "$@"; shift; ADMIN_EMAIL="$1" ;;
+      --admin-user) need_value "$@"; shift; ADMIN_USER="$1"; ADMIN_USER_EXPLICIT=1 ;;
+      --admin-email) need_value "$@"; shift; ADMIN_EMAIL="$1"; ADMIN_EMAIL_EXPLICIT=1 ;;
       --admin-password) need_value "$@"; shift; ADMIN_PASSWORD="$1"; ADMIN_PASSWORD_SUPPLIED=1 ;;
       --generate-admin-password) ADMIN_PASSWORD_GENERATED=1 ;;
       --keep-config) KEEP_CONFIG=1 ;;
@@ -301,33 +355,127 @@ install_dependencies() {
 
 # ---- UI -------------------------------------------------------------------
 have_tty() { [[ -t 0 || -r /dev/tty ]]; }
-ui_menu() {
-  local result=""
-  if command -v whiptail >/dev/null && have_tty; then
-    result=$(whiptail --title "Algen PAM" --menu "Existing installation detected" 18 72 6 \
-      1 "Update application" 2 "Reinstall application" 3 "Back up configuration" \
-      4 "Remove application, preserve data" 5 "Remove everything" 6 "Cancel" 3>&1 1>&2 2>&3) || return 1
-  elif command -v dialog >/dev/null && have_tty; then
-    result=$(dialog --stdout --title "Algen PAM" --menu "Existing installation detected" 18 72 6 \
-      1 "Update application" 2 "Reinstall application" 3 "Back up configuration" \
-      4 "Remove application, preserve data" 5 "Remove everything" 6 "Cancel") || return 1
-  else
-    have_tty || die "No interactive terminal. Use --silent --yes and an explicit mode."
-    printf '%s\n' '1) Update application' '2) Reinstall application' '3) Back up configuration' \
-      '4) Remove application, preserve data' '5) Remove everything' '6) Cancel' >/dev/tty
-    read -r -p 'Choice [1-6]: ' result </dev/tty || return 1
-  fi
-  case "$result" in 1) MODE=update;; 2) MODE=reinstall;; 3) MODE=backup;; 4) MODE=remove-app;; 5) MODE=uninstall;; 6) return 1;; *) return 1;; esac
+read_from_tty() {
+  local prompt="$1" answer=""
+  [[ -e /dev/tty ]] || return 1
+  read -r -p "$prompt" answer </dev/tty || return 1
+  printf '%s' "$answer"
+}
+read_from_tty_timeout() {
+  local prompt="$1" timeout="$2" answer="" key="" deadline remaining
+  [[ -e /dev/tty && "$timeout" =~ ^[1-9][0-9]*$ ]] || return 1
+  deadline=$((SECONDS + timeout))
+  while (( (remaining = deadline - SECONDS) > 0 )); do
+    printf '\r\033[2K%s — automatyczna aktualizacja za %s s: %s' "$prompt" "$remaining" "$answer" >/dev/tty
+    key=""
+    if IFS= read -r -s -n 1 -t 1 key </dev/tty; then
+      case "$key" in
+        "") printf '\r\033[2K%s: %s\n' "$prompt" "$answer" >/dev/tty; printf '%s' "$answer"; return 0 ;;
+        $'\b'|$'\177') [[ -z "$answer" ]] || answer="${answer%?}" ;;
+        *) answer+="$key" ;;
+      esac
+    fi
+  done
+  printf '\r\033[2K' >/dev/tty
+  return 1
+}
+map_existing_action() {
+  case "${1:-}" in
+    ""|1) MODE=update ;;
+    2) MODE=reinstall ;;
+    3) MODE=backup ;;
+    4) MODE=remove-app ;;
+    5) MODE=uninstall ;;
+    6) MODE=cancel; return 2 ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+print_existing_installation_menu() {
+  cat >/dev/tty <<EOF
+
+Wykryto istniejącą instalację Algen PAM.
+
+Katalog instalacji: $INSTALL_DIR
+Konfiguracja:       $CONFIG_FILE
+Dane:               $DATA_DIR
+Logi:               $LOG_DIR
+
+Wybierz operację:
+
+  1) Aktualizuj aplikację
+     Pobierz nową wersję i zachowaj konfigurację, dane oraz logi.
+
+  2) Przeinstaluj aplikację
+     Zastąp pliki aplikacji i środowisko Python.
+     Zachowaj konfigurację, dane oraz logi.
+
+  3) Utwórz kopię bezpieczeństwa
+     Wykonaj kopię konfiguracji i danych bez zmiany aplikacji.
+
+  4) Usuń aplikację
+     Usuń kod, launcher, usługę systemd i skrót desktopowy.
+     Zachowaj konfigurację, dane oraz logi.
+
+  5) Usuń całą instalację
+     Usuń aplikację, konfigurację, dane, logi i integracje systemowe.
+
+  6) Anuluj
+
+EOF
 }
 interactive_mode_selection() {
-  [[ "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE_EXPLICIT" -eq 0 && $(marker_valid; echo $?) -eq 0 ]] || return 0
-  ui_menu || die "Operation cancelled by user."
+  [[ "$MODE_EXPLICIT" -eq 0 && "$MODE_SELECTED_INTERACTIVELY" -eq 0 && "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 ]] || return 0
+  marker_valid || return 0
+  local choice="" result=0
+  if ! have_tty; then
+    MODE=update; MODE_SELECTED_INTERACTIVELY=1; AUTO_UPDATE_SELECTED=1
+    info "Brak terminala wejściowego. Rozpoczynam bezpieczną aktualizację z zachowaniem konfiguracji i danych."
+    return 0
+  fi
+  print_existing_installation_menu
+  while true; do
+    if choice="$(read_from_tty_timeout "Wybierz operację [1]" "$EXISTING_ACTION_TIMEOUT")"; then
+      if map_existing_action "$choice"; then
+        MODE_SELECTED_INTERACTIVELY=1
+        return 0
+      else
+        result=$?
+        [[ "$result" -ne 2 ]] || { info "Operacja anulowana przez użytkownika."; MODE=cancel; MODE_SELECTED_INTERACTIVELY=1; return 0; }
+        warn "Nieprawidłowy wybór '$choice'. Wybierz numer od 1 do 6."
+      fi
+    else
+      printf '\n' >/dev/tty
+      MODE=update; MODE_SELECTED_INTERACTIVELY=1; AUTO_UPDATE_SELECTED=1
+      info "Nie wybrano operacji. Rozpoczynam bezpieczną aktualizację."
+      info "Konfiguracja i dane zostaną zachowane."
+      return 0
+    fi
+  done
+}
+ui_input() {
+  local title="$1" prompt="$2" default="$3" result=""
+  if command -v whiptail >/dev/null && have_tty; then
+    result="$(whiptail --title "$title" --inputbox "$prompt" 10 72 "$default" 3>&1 1>&2 2>&3)" || return 1
+  elif command -v dialog >/dev/null && have_tty; then
+    result="$(dialog --stdout --title "$title" --inputbox "$prompt" 10 72 "$default")" || return 1
+  else
+    result="$(read_from_tty "$prompt [$default]: ")" || return 1
+    result="${result:-$default}"
+  fi
+  printf '%s' "$result"
+}
+ui_yesno() {
+  local prompt="$1" answer=""
+  if command -v whiptail >/dev/null && have_tty; then whiptail --title "Algen PAM" --yesno "$prompt" 9 72
+  elif command -v dialog >/dev/null && have_tty; then dialog --title "Algen PAM" --yesno "$prompt" 9 72
+  else answer="$(read_from_tty "$prompt [y/N]: ")" || return 1; [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]; fi
 }
 interactive_install_wizard() {
   [[ "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
   marker_valid && return 0
   have_tty || die "No interactive terminal. Use --silent --yes with explicit options."
-  local choice=""
+  local choice="" value=""
   if [[ "$SCOPE_EXPLICIT" -eq 0 ]]; then
     if command -v whiptail >/dev/null; then
       choice=$(whiptail --title "Algen PAM" --menu "Choose installation scope" 14 68 2 1 "System-wide (/opt/algen-pam)" 2 "Current user" 3>&1 1>&2 2>&3) || die "Operation cancelled."
@@ -340,39 +488,99 @@ interactive_install_wizard() {
     case "$choice" in 1) SCOPE=system;; 2) SCOPE=user;; *) die "Invalid scope selection.";; esac
     resolve_identity; resolve_paths
   fi
+  if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]]; then
+    value="$(ui_input "Algen PAM" "Katalog instalacyjny" "$INSTALL_DIR")" || die "Operacja anulowana."
+    INSTALL_DIR="$value"; resolve_paths
+  fi
   if [[ -z "$SERVICE_CHOICE" ]]; then
-    if command -v whiptail >/dev/null; then
-      if whiptail --title "Algen PAM" --yesno "Create a systemd service?" 9 60; then SERVICE_CHOICE=1
-      else choice=$?; [[ "$choice" -eq 1 ]] && SERVICE_CHOICE=0 || die "Operation cancelled."; fi
-    elif command -v dialog >/dev/null; then
-      if dialog --title "Algen PAM" --yesno "Create a systemd service?" 9 60; then SERVICE_CHOICE=1
-      else choice=$?; [[ "$choice" -eq 1 ]] && SERVICE_CHOICE=0 || die "Operation cancelled."; fi
+    ui_yesno "Utworzyć usługę systemd?" && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
+  fi
+  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then ui_yesno "Utworzyć skrót desktopowy?" && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
+  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(ui_input "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
+  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(ui_input "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
+  if command -v whiptail >/dev/null; then
+    choice="$(whiptail --title "Algen PAM" --menu "Lokalny tryb uwierzytelniania" 14 72 2 1 "Linux PAM / konto systemowe" 2 "Baza danych aplikacji" 3>&1 1>&2 2>&3)" || die "Operacja anulowana."
+  elif command -v dialog >/dev/null; then
+    choice="$(dialog --stdout --title "Algen PAM" --menu "Lokalny tryb uwierzytelniania" 14 72 2 1 "Linux PAM / konto systemowe" 2 "Baza danych aplikacji")" || die "Operacja anulowana."
+  else
+    printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
+    choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
+    choice="${choice:-1}"
+  fi
+  case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
+  [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(ui_input "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
+  [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(ui_input "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
+  if [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
+    if ui_yesno "Wygenerować bezpieczne hasło administratora automatycznie?"; then
+      ADMIN_PASSWORD_GENERATED=1
     else
-      read -r -p 'Create a systemd service? [y/N]: ' choice </dev/tty || die "Operation cancelled."
-      [[ "$choice" =~ ^([yY]|[yY][eE][sS])$ ]] && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
+      if command -v whiptail >/dev/null; then ADMIN_PASSWORD="$(whiptail --title "Algen PAM" --passwordbox "Hasło administratora (minimum 12 znaków)" 10 72 3>&1 1>&2 2>&3)" || die "Operacja anulowana."
+      elif command -v dialog >/dev/null; then ADMIN_PASSWORD="$(dialog --stdout --title "Algen PAM" --insecure --passwordbox "Hasło administratora (minimum 12 znaków)" 10 72)" || die "Operacja anulowana."
+      else read -r -s -p 'Hasło administratora (minimum 12 znaków): ' ADMIN_PASSWORD </dev/tty || die "Operacja anulowana."; printf '\n' >/dev/tty
+      fi
+      ADMIN_PASSWORD_SUPPLIED=1
     fi
   fi
 }
 confirm_summary() {
-  local ref_description="branch $BRANCH"
-  [[ -z "$TAG" ]] || ref_description="tag $TAG"
+  local ref_description="$BRANCH" mode_label="" scope_label="" service_label="nie" desktop_label="nie" backup_label="nie" preserve_data="tak" preserve_config="tak"
+  [[ -z "$TAG" ]] || ref_description="$TAG"
+  case "$MODE" in install) mode_label="Nowa instalacja"; backup_label="nie";; update) mode_label="Aktualizacja"; backup_label="tak";; reinstall) mode_label="Reinstalacja"; backup_label="tak";; backup) mode_label="Kopia bezpieczeństwa"; backup_label="tak";; remove-app) mode_label="Usunięcie aplikacji";; uninstall) mode_label="Pełna deinstalacja"; preserve_data=$([[ "$KEEP_DATA" -eq 1 ]] && printf tak || printf nie); preserve_config=$([[ "$KEEP_CONFIG" -eq 1 ]] && printf tak || printf nie);; esac
+  [[ "$SCOPE" == system ]] && scope_label="Instalacja systemowa" || scope_label="Instalacja użytkownika"
+  [[ "$SERVICE_CHOICE" -eq 1 ]] && service_label="tak"
+  [[ "$DESKTOP_CHOICE" -eq 1 ]] && desktop_label="tak"
   cat >&2 <<EOF
 
-Operation summary
-  mode:          $MODE
-  scope:         $SCOPE
-  install dir:   $INSTALL_DIR
-  config:        $CONFIG_FILE
-  data:          $DATA_DIR
-  source:        $REPO ($ref_description)
-  HTTP/gateway:  $APP_PORT / $GATEWAY_PORT
-  service:       $SERVICE_CHOICE
+Podsumowanie operacji
+
+  Operacja:                $mode_label
+  Zakres:                  $scope_label
+  Użytkownik usługi:       $TARGET_USER
+  Katalog instalacji:      $INSTALL_DIR
+  Konfiguracja:            $CONFIG_FILE
+  Dane:                    $DATA_DIR
+  Logi:                    $LOG_DIR
+  Repozytorium:            $REPO
+  Gałąź/tag:               $ref_description
+  Port HTTP:               $APP_PORT
+  Port SSH Gateway:        $GATEWAY_PORT
+  Usługa systemd:          $service_label
+  Skrót desktopowy:        $desktop_label
+  Kopia bezpieczeństwa:    $backup_label
+  Zachowanie danych:       $preserve_data
+  Zachowanie konfiguracji: $preserve_config
 EOF
-  [[ "$YES" -eq 1 || "$DRY_RUN" -eq 1 ]] && return 0
+  [[ "$DRY_RUN" -eq 1 || "$AUTO_UPDATE_SELECTED" -eq 1 ]] && return 0
+  if [[ "$YES" -eq 1 && ( "$MODE" != uninstall || "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]]; then return 0; fi
   [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes."
   have_tty || die "No interactive terminal available for confirmation."
-  local answer; read -r -p "Proceed? [y/N]: " answer </dev/tty || die "Operation cancelled."
-  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Operation cancelled."
+  local answer; answer="$(read_from_tty "Kontynuować? [y/N]: ")" || die "Operacja anulowana."
+  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Operacja anulowana."
+}
+confirm_full_uninstall() {
+  [[ "$MODE" == uninstall ]] || return 0
+  [[ "$YES" -eq 1 && ( "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]] && return 0
+  cat >&2 <<EOF
+
+UWAGA
+
+Ta operacja może usunąć:
+
+  $INSTALL_DIR
+  $CONFIG_DIR
+  $LOG_DIR
+  usługę systemd,
+  launcher,
+  skrót desktopowy,
+  bazę danych,
+  konfigurację,
+  zapisane sekrety i klucze.
+
+Operacja jest nieodwracalna.
+EOF
+  have_tty || die "Pełna deinstalacja wymaga wpisania USUN w terminalu albo jawnych opcji --uninstall --yes."
+  local answer; answer="$(read_from_tty "Wpisz USUN, aby kontynuować: ")" || die "Operacja anulowana."
+  [[ "$answer" == USUN ]] || die "Pełna deinstalacja anulowana — nie wpisano USUN."
 }
 
 # ---- configuration ---------------------------------------------------------
@@ -599,11 +807,12 @@ write_marker() {
   target_cmd install -m 0600 "$tmp" "$INSTALL_DIR/.algen-pam-install"
 }
 backup_state() {
+  section "Tworzenie kopii bezpieczeństwa"
   local root
   root="$CONFIG_DIR/backups/$(date -u +%Y%m%dT%H%M%SZ)"; target_cmd mkdir -p "$root"
   [[ ! -f "$CONFIG_FILE" ]] || target_cmd cp -p "$CONFIG_FILE" "$root/env"
   [[ ! -d "$DATA_DIR" ]] || target_cmd tar -C "$DATA_DIR" -czf "$root/data.tar.gz" .
-  target_cmd chmod -R go-rwx "$root"; info "Backup created: $root"
+  target_cmd chmod -R go-rwx "$root"; ok "Kopia bezpieczeństwa została utworzona: $root"
   STATE_BACKUP_DIR="$root"
 }
 safe_target() {
@@ -637,7 +846,8 @@ deploy_release() {
   fi
 }
 rollback_release() {
-  warn "Validation failed; rolling back the application release."
+  section "Cofanie zmian"
+  warn "Walidacja nie powiodła się; przywracam poprzednią wersję aplikacji."
   [[ "$SERVICE_CHOICE" -eq 0 ]] || systemctl_do stop algen-pam.service 2>/dev/null || true
   local failed
   failed="$INSTALL_DIR.failed.$(date +%s)"
@@ -674,7 +884,24 @@ remove_integrations() {
   if [[ -f "$SERVICE_FILE" ]]; then systemctl_do disable algen-pam.service 2>/dev/null || true; target_cmd rm -f "$SERVICE_FILE"; systemctl_do daemon-reload || true; fi
   target_cmd rm -f "$BIN_PATH" "$DESKTOP_FILE"
 }
-remove_app_only() { safe_target; remove_integrations; target_cmd find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name data ! -name .algen-pam-install -exec rm -rf -- '{}' +; info "Application removed; data, configuration, and logs preserved."; }
+remove_app_only() {
+  safe_target
+  remove_integrations
+  target_cmd find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name data ! -name .algen-pam-install -exec rm -rf -- '{}' +
+  cat >&2 <<EOF
+
+Aplikacja została usunięta.
+
+Zachowano:
+  konfigurację,
+  dane,
+  bazę danych,
+  logi.
+
+Aby ponownie zainstalować aplikację:
+  $([[ "$SCOPE" == system ]] && printf 'sudo ./install.sh --reinstall --system' || printf './install.sh --reinstall --user')
+EOF
+}
 full_uninstall() {
   safe_target; remove_integrations
   # Keep the final log writable until the final message has been emitted.
@@ -700,29 +927,37 @@ prepare_admin_password() {
 }
 prepare_logging() { target_cmd mkdir -p "$LOG_DIR"; target_cmd touch "$LOG_FILE"; target_cmd chmod 0600 "$LOG_FILE"; }
 execute_install_or_update() {
+  section "Sprawdzanie zależności"
   install_dependencies
+  section "Pobieranie źródeł"
   acquire_source
+  section "Budowanie nowej wersji"
   build_staged_release
   create_system_user_if_needed
   capture_service_state
   if [[ "$SERVICE_WAS_ACTIVE" -eq 1 ]]; then systemctl_do stop algen-pam.service; fi
   [[ "$MODE" == update || "$MODE" == reinstall ]] && backup_state
+  section "Przygotowanie konfiguracji"
   if ! prepare_config; then
     [[ "$SERVICE_WAS_ACTIVE" -eq 0 ]] || systemctl_do start algen-pam.service || true
     die "Configuration preparation failed before release switch."
   fi
+  section "Wdrażanie aplikacji"
   deploy_release
+  section "Konfigurowanie systemd"
   if ! write_launcher || ! write_service || ! write_desktop || ! bootstrap_admin; then
     rollback_release
     die "Release integration or administrator bootstrap failed; rollback completed."
   fi
   if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
+    section "Uruchamianie usługi"
     if [[ "$MODE" == install ]]; then systemctl_do enable --now algen-pam.service || { rollback_release; die "Service start failed; rollback completed."; }
     elif [[ "$SERVICE_WAS_ACTIVE" -eq 1 ]]; then systemctl_do start algen-pam.service || { rollback_release; die "Service restart failed; rollback completed."; }
     fi
   fi
   debug "Previous service state: active=$SERVICE_WAS_ACTIVE enabled=$SERVICE_WAS_ENABLED"
   local valid=0
+  section "Walidacja aplikacji"
   if [[ "$SERVICE_CHOICE" -eq 1 && ( "$SERVICE_WAS_ACTIVE" -eq 1 || "$MODE" == install ) ]]; then
     service_is_active && wait_health && valid=1
   else
@@ -733,40 +968,101 @@ execute_install_or_update() {
   if [[ "$valid" -ne 1 ]]; then rollback_release; die "New release failed validation; rollback completed."; fi
   [[ -z "$RELEASE_BACKUP" || ! -d "$RELEASE_BACKUP" ]] || target_cmd rm -rf -- "$RELEASE_BACKUP"
 }
+first_host_ipv4() {
+  local candidate=""
+  if command -v hostname >/dev/null 2>&1; then
+    candidate="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $0 !~ /^127\./ {print; exit}')"
+  fi
+  if [[ -z "$candidate" ]] && command -v ip >/dev/null 2>&1; then
+    candidate="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+  fi
+  printf '%s' "${candidate:-ADRES_IP_SERWERA}"
+}
+print_generated_admin_password() {
+  [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 && "$MODE" != uninstall && -n "$ADMIN_PASSWORD" ]] || return 0
+  cat <<EOF
+
+Wygenerowane hasło administratora — zostanie pokazane tylko raz:
+
+  użytkownik: $ADMIN_USER
+  hasło:      $ADMIN_PASSWORD
+
+Zapisz je przed zamknięciem terminala.
+EOF
+}
+print_completion() {
+  section "Operacja zakończona"
+  case "$MODE" in
+    install|update|reinstall)
+      local address service_prefix="" journal_prefix=""
+      [[ "$APP_HOST" == 0.0.0.0 ]] && address="$(first_host_ipv4)" || address="$APP_HOST"
+      [[ "$SCOPE" == user ]] && { service_prefix="--user "; journal_prefix="--user "; }
+      cat <<EOF
+
+Operacja zakończona pomyślnie.
+
+Panel Algen PAM:
+  http://$address:$APP_PORT/
+
+SSH Gateway:
+  ssh -p $GATEWAY_PORT UŻYTKOWNIK@$address
+
+Usługa:
+  systemctl ${service_prefix}status algen-pam
+  systemctl ${service_prefix}restart algen-pam
+  journalctl ${journal_prefix}-u algen-pam -f
+
+Konfiguracja:
+  $CONFIG_FILE
+
+Dane:
+  $DATA_DIR
+
+Log instalatora:
+  $LOG_FILE
+EOF
+      print_generated_admin_password
+      ;;
+    backup) ok "Kopia bezpieczeństwa jest dostępna w: $STATE_BACKUP_DIR" ;;
+    remove-app) ok "Kod aplikacji i integracje zostały usunięte; stan instalacji zachowano." ;;
+    uninstall) ok "Pełna deinstalacja została zakończona." ;;
+  esac
+}
 main() {
-  parse_args "$@"                         # 1
-  validate_arguments                       # 2
-  detect_existing_scope                    # 3
-  resolve_identity
+  parse_args "$@"                          # 1. Parsowanie argumentów
+  banner
+  section "Sprawdzanie systemu"
+  validate_arguments                        # 2. Podstawowa walidacja
+  detect_existing_scope                     # 3. Wykrycie zakresu
+  resolve_identity                          # 4. Użytkownik i ścieżki
   resolve_paths
-  interactive_mode_selection
-  interactive_install_wizard
-  interactive_mode_selection
-  determine_mode                           # 4
+  section "Wykrywanie istniejącej instalacji"
+  marker_valid && info "Znaleziono prawidłowy znacznik instalacji w $INSTALL_DIR." || debug "Brak prawidłowego znacznika w $INSTALL_DIR."
+  section "Wybór operacji"
+  interactive_mode_selection                # 5/6. Dokładnie jeden wybór operacji
+  [[ "$MODE" != cancel ]] || return 0
+  interactive_install_wizard                # Kreator wyłącznie dla nowej instalacji
+  determine_mode
   [[ -n "$SERVICE_CHOICE" ]] || { if [[ -f "$SERVICE_FILE" ]]; then SERVICE_CHOICE=1; else SERVICE_CHOICE=0; fi; }
-  load_existing_configuration              # 5/6
-  validate_arguments
-  require_privileges                       # 7
-  prepare_admin_defaults                    # 8
-  prepare_admin_password
+  load_existing_configuration               # 7. Istniejąca konfiguracja
+  validate_arguments                        # 8. Ponowna walidacja
   validate_ports
-  confirm_summary                          # 9
-  [[ "$DRY_RUN" -eq 0 ]] || { info "Dry run complete; no changes were made."; return 0; }
+  require_privileges                        # 9. Uprawnienia
+  prepare_admin_defaults                    # 10. Administrator
+  prepare_admin_password
+  confirm_summary                           # 11. Podsumowanie
+  confirm_full_uninstall                    # 12. Potwierdzenie
+  [[ "$DRY_RUN" -eq 0 ]] || { ok "Tryb dry-run zakończony; nie wprowadzono żadnych zmian."; return 0; }
   MUTATIONS_STARTED=1
   prepare_logging
-  case "$MODE" in                          # 10
+  case "$MODE" in                          # 13/14. Wykonanie operacji
     install|update|reinstall) execute_install_or_update ;;
     backup) backup_state ;;
     remove-app) remove_app_only ;;
     uninstall) full_uninstall ;;
   esac
-                                           # 11: operation-specific validation completed
-  info "Operation '$MODE' completed successfully."
-  if [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 && "$MODE" != uninstall ]]; then
-    printf '\nGenerated administrator password (shown once):\n  %s\n' "$ADMIN_PASSWORD"
-  fi
+  print_completion                          # 15/16. Walidacja i komunikat końcowy
   unset ADMIN_PASSWORD
-  [[ "$MODE" == install || "$MODE" == update || "$MODE" == reinstall ]] && printf '\nOpen: http://127.0.0.1:%s/\nConfig: %s\n' "$APP_PORT" "$CONFIG_FILE"
 }
 
-main "$@"
+[[ "${ALGEN_PAM_INSTALLER_SOURCE_ONLY:-0}" -eq 1 ]] || main "$@"
