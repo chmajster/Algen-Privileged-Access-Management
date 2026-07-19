@@ -10,6 +10,7 @@ from app.config import settings
 from app.gateway.service import finish_gateway_connection, gateway_connection_string, seed_mock_gateway_for_grant
 from app.models import AccessGrant, AccessRequest, GatewayConnection, Policy, Server, User, utcnow
 from app.policy.engine import PolicyDecision, PolicyEngine
+from app.rbac import has_permission
 from app.security import sanitize_linux_username, validate_linux_username
 from app.session_monitor import (
     configure_command_logging,
@@ -118,7 +119,15 @@ def create_grant_for_request(db: Session, access_request: AccessRequest, actor: 
     force_gateway = bool(request_decision.get("requires_gateway"))
     if access_request.session_recording_required and not server.session_recording_enabled:
         force_gateway = True
-    access_mode = "gateway" if force_gateway or settings.pam_access_mode == "gateway" or not server.direct_access_enabled else "direct"
+    can_connect = has_permission(db, user, "servers.connect", server_id=server.id)
+    can_direct = can_connect and server.direct_access_enabled and has_permission(db, user, "servers.direct_ssh", server_id=server.id)
+    can_gateway = can_connect and server.gateway_enabled and has_permission(db, user, "servers.gateway_ssh", server_id=server.id)
+    if force_gateway or settings.pam_access_mode == "gateway" or not can_direct:
+        if not can_gateway:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Gateway connection is not permitted")
+        access_mode = "gateway"
+    else:
+        access_mode = "direct"
     grant = AccessGrant(
         request_id=access_request.id,
         user_id=user.id,

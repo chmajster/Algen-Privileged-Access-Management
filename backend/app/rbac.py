@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import false
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, joinedload
 
 from app.config import settings
 from app.models import (
@@ -115,7 +115,7 @@ def _active(membership: ServerGroupUserMembership, now: datetime | None = None) 
 def active_memberships(db: Session, user: User, *, group_id: int | None = None, server_id: int | None = None) -> list[ServerGroupUserMembership]:
     if not user.is_active:
         return []
-    query = db.query(ServerGroupUserMembership).join(ServerGroup).filter(
+    query = db.query(ServerGroupUserMembership).options(joinedload(ServerGroupUserMembership.group), joinedload(ServerGroupUserMembership.permission_template)).join(ServerGroup).filter(
         ServerGroupUserMembership.user_id == user.id,
         ServerGroupUserMembership.enabled.is_(True),
         ServerGroup.enabled.is_(True),
@@ -238,7 +238,7 @@ def can_manage_user(db: Session, actor: User, target: User, group_id: int | None
 
 def constraints_for_request(db: Session, user: User, server_id: int) -> dict:
     memberships = active_memberships(db, user, server_id=server_id)
-    if is_global_admin(user):
+    if is_global_admin(user) or not settings.pam_group_scoped_access:
         return {"memberships": [], "allowed_access_types": {"ssh_only", "limited_sudo", "full_sudo"}, "allowed_durations": set(), "max_minutes": 10080, "require_approval": False, "require_mfa": False, "require_gateway": False, "deny_direct": False, "recording": False, "command_logging": False, "min_reason_length": 0, "max_concurrent_grants": 100, "max_active_sessions": 100, "time_allowed": True}
     groups = [membership.group for membership in memberships]
     allowed_sets = [{"ssh_only" if item == "ssh" else item for item in group.allowed_access_types.split(",") if item} for group in groups]

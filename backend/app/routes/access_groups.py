@@ -68,6 +68,22 @@ def _server_out(db: Session, server: Server) -> dict:
     return {**schemas.ServerOut.model_validate(server).model_dump(), "access_group_ids": ids}
 
 
+def _revoke_lost_server_access(db: Session, group: ServerGroup, server_ids: list[int], actor: User, ip: str | None) -> None:
+    if not server_ids:
+        return
+    user_ids = [value for (value,) in db.query(ServerGroupUserMembership.user_id).filter_by(server_group_id=group.id).all()]
+    for grant in db.query(AccessGrant).filter(AccessGrant.server_id.in_(server_ids), AccessGrant.user_id.in_(user_ids), AccessGrant.status == "active").all():
+        type_permission = {"limited_sudo": "access.limited_sudo", "full_sudo": "access.full_sudo"}.get(grant.access_type)
+        transport_permission = "servers.gateway_ssh" if grant.gateway_session_required else "servers.direct_ssh"
+        authorized = has_permission(db, grant.user, "servers.connect", server_id=grant.server_id) and has_permission(db, grant.user, transport_permission, server_id=grant.server_id)
+        if type_permission: authorized = authorized and has_permission(db, grant.user, type_permission, server_id=grant.server_id)
+        if not authorized:
+            revoke_grant(db, grant, actor, "Server-group scope removed", ip)
+    for item in db.query(AccessRequest).filter(AccessRequest.server_id.in_(server_ids), AccessRequest.user_id.in_(user_ids), AccessRequest.status == "pending").all():
+        if not has_permission(db, item.user, "access.request", server_id=item.server_id):
+            item.status = "cancelled"
+
+
 def _permission(db: Session, code: str) -> Permission:
     code = canonical_permission(code)
     item = db.query(Permission).filter(Permission.code == code).first()
@@ -184,6 +200,10 @@ def update_group(group_id: int, payload: schemas.AccessGroupUpdate, request: Req
         raise HTTPException(status.HTTP_409_CONFLICT, "Group name already exists")
     for key, value in data.items(): setattr(group, key, value)
     group.updated_by_id = current_user.id
+    if old["enabled"] and not group.enabled:
+        db.flush()
+        server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+        _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
     write_audit(db, "server_group.updated", "Updated server group", user_id=current_user.id, source_ip=source_ip(request), metadata={"group_id": group.id, "old": old, "new": data})
     db.commit(); db.refresh(group)
     return _group_out(db, group)
@@ -195,7 +215,10 @@ def delete_group(group_id: int, request: Request, current_user: User = Depends(g
     group = _group(db, group_id); require_permission(db, current_user, "group.permissions.manage", group_id=group_id, source_ip=source_ip(request))
     nonempty = db.query(ServerGroupMember).filter_by(server_group_id=group_id).count() or db.query(ServerGroupUserMembership).filter_by(server_group_id=group_id).count()
     if nonempty or group.is_system:
-        group.enabled = False; action = "server_group.disabled"; message = "Group disabled because it contains related data"
+        group.enabled = False; db.flush()
+        server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+        _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
+        action = "server_group.disabled"; message = "Group disabled because it contains related data"
     else:
         db.query(GroupPermission).filter_by(server_group_id=group_id).delete(); db.query(UserGroupPermission).filter_by(server_group_id=group_id).delete(); db.delete(group)
         action = "server_group.deleted"; message = "Empty group deleted"
@@ -213,7 +236,7 @@ def group_users(group_id: int, current_user: User = Depends(get_current_user), d
 @router.post("/access-groups/{group_id}/users", response_model=list[schemas.AccessGroupUserOut])
 @router.post("/server-groups/{group_id}/users", response_model=list[schemas.AccessGroupUserOut])
 def add_users(group_id: int, payload: schemas.AccessGroupUserIn, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _group(db, group_id); require_permission(db, current_user, "group.members.manage", group_id=group_id, source_ip=source_ip(request))
+    group = _group(db, group_id); require_permission(db, current_user, "group.members.manage", group_id=group_id, source_ip=source_ip(request))
     users = db.query(User).filter(User.id.in_(payload.user_ids)).all()
     if len(users) != len(set(payload.user_ids)): raise HTTPException(status.HTTP_400_BAD_REQUEST, "One or more users do not exist")
     if any(user.role == "admin" for user in users) and not is_global_admin(current_user): raise HTTPException(status.HTTP_403_FORBIDDEN, "Operator cannot manage administrators")
@@ -222,7 +245,7 @@ def add_users(group_id: int, payload: schemas.AccessGroupUserIn, request: Reques
         row = db.query(ServerGroupUserMembership).filter_by(server_group_id=group_id, user_id=user.id).first()
         old = _membership_out(row) if row else None
         if not row:
-            row = ServerGroupUserMembership(server_group_id=group_id, user_id=user.id, created_by_id=current_user.id); db.add(row)
+            row = ServerGroupUserMembership(server_group_id=group_id, user_id=user.id, valid_from=payload.valid_from or utcnow(), created_by_id=current_user.id); db.add(row)
         row.group_role = payload.group_role
         if payload.valid_from is not None: row.valid_from = payload.valid_from
         row.valid_to = payload.valid_to if payload.valid_to is not None else payload.expires_at
@@ -230,6 +253,9 @@ def add_users(group_id: int, payload: schemas.AccessGroupUserIn, request: Reques
         row.permission_template_id = payload.permission_template_id; row.updated_by_id = current_user.id; db.flush()
         write_audit(db, "server_group.user_assigned", "Assigned user to group", user_id=current_user.id, source_ip=source_ip(request), metadata={"group_id": group_id, "subject_user_id": user.id, "old": old, "new": payload.model_dump(mode="json")})
         output.append(row)
+    db.flush()
+    server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+    _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
     db.commit()
     return [_membership_out(row) for row in output]
 
@@ -246,6 +272,10 @@ def update_user_membership(group_id: int, user_id: int, payload: schemas.AccessG
     mapping = {"expires_at": "valid_to", "is_active": "enabled"}
     for key, value in data.items(): setattr(row, mapping.get(key, key), value)
     row.updated_by_id = current_user.id
+    db.flush()
+    group = _group(db, group_id)
+    server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+    _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
     write_audit(db, "server_group.membership_updated", "Updated group membership", user_id=current_user.id, source_ip=source_ip(request), metadata={"group_id": group_id, "subject_user_id": user_id, "old": old, "new": data})
     db.commit(); db.refresh(row); return _membership_out(row)
 
@@ -262,9 +292,8 @@ def remove_user(group_id: int, user_id: int, request: Request, current_user: Use
     row.enabled = False; db.flush()
     lost = [server_id for server_id in server_ids if not has_permission(db, target, "servers.connect", server_id=server_id)]
     db.query(AccessRequest).filter(AccessRequest.user_id == user_id, AccessRequest.server_id.in_(lost), AccessRequest.status == "pending").update({"status": "cancelled"}, synchronize_session=False)
-    if group.revoke_on_membership_loss:
-        for grant in db.query(AccessGrant).filter(AccessGrant.user_id == user_id, AccessGrant.server_id.in_(lost), AccessGrant.status == "active").all():
-            revoke_grant(db, grant, current_user, "Server-group membership removed", source_ip(request))
+    for grant in db.query(AccessGrant).filter(AccessGrant.user_id == user_id, AccessGrant.server_id.in_(lost), AccessGrant.status == "active").all():
+        revoke_grant(db, grant, current_user, "Server-group membership removed", source_ip(request))
     if group.terminate_sessions_on_membership_loss:
         db.query(PamSession).filter(PamSession.user_id == user_id, PamSession.server_id.in_(lost), PamSession.status == "active").update({"status": "terminated", "ended_at": utcnow(), "termination_reason": "membership_removed"}, synchronize_session=False)
     db.query(UserGroupPermission).filter_by(server_group_id=group_id, user_id=user_id).delete(); db.delete(row)
@@ -281,13 +310,15 @@ def group_servers(group_id: int, current_user: User = Depends(get_current_user),
 
 
 def _change_servers(group_id: int, server_ids: list[int], add: bool, request: Request, current_user: User, db: Session) -> dict:
-    _group(db, group_id); require_permission(db, current_user, "group.servers.manage", group_id=group_id, source_ip=source_ip(request))
+    group = _group(db, group_id); require_permission(db, current_user, "group.servers.manage", group_id=group_id, source_ip=source_ip(request))
     if db.query(Server).filter(Server.id.in_(server_ids)).count() != len(set(server_ids)): raise HTTPException(status.HTTP_400_BAD_REQUEST, "One or more servers do not exist")
     for server_id in set(server_ids):
         row = db.query(ServerGroupMember).filter_by(server_group_id=group_id, server_id=server_id).first()
         if add and not row: db.add(ServerGroupMember(server_group_id=group_id, server_id=server_id, created_by_id=current_user.id))
         if not add and row: db.delete(row)
         write_audit(db, "server_group.server_added" if add else "server_group.server_removed", "Changed group server membership", user_id=current_user.id, server_id=server_id, source_ip=source_ip(request), metadata={"group_id": group_id, "added": add})
+    db.flush()
+    if not add: _revoke_lost_server_access(db, group, list(set(server_ids)), current_user, source_ip(request))
     db.commit(); return {"message": f"Processed {len(set(server_ids))} servers"}
 
 
@@ -337,6 +368,8 @@ def group_permissions(group_id: int, current_user: User = Depends(get_current_us
 @router.put("/server-groups/{group_id}/permissions", response_model=list[schemas.PermissionEntry])
 def replace_permissions(group_id: int, payload: list[schemas.PermissionEntry], request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _group(db, group_id); require_permission(db, current_user, "group.permissions.manage", group_id=group_id, source_ip=source_ip(request))
+    keys = [(item.membership_id, canonical_permission(item.permission)) for item in payload]
+    if len(keys) != len(set(keys)): raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Duplicate permission entries")
     old = _permission_entries(db, group_id); db.query(GroupPermission).filter_by(server_group_id=group_id).delete()
     for item in payload:
         if item.membership_id:
@@ -347,6 +380,10 @@ def replace_permissions(group_id: int, payload: list[schemas.PermissionEntry], r
         else:
             permission = _permission(db, item.permission)
             db.add(GroupPermission(server_group_id=group_id, permission_id=permission.id, allowed=item.effect == "allow", created_by_id=current_user.id, updated_by_id=current_user.id))
+    db.flush()
+    group = _group(db, group_id)
+    server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+    _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
     write_audit(db, "server_group.permissions_updated", "Updated group permissions", user_id=current_user.id, source_ip=source_ip(request), metadata={"group_id": group_id, "old": old, "new": [item.model_dump() for item in payload]})
     db.commit(); return payload
 
@@ -361,10 +398,16 @@ def user_permissions(group_id: int, user_id: int, current_user: User = Depends(g
 def replace_user_permissions(group_id: int, user_id: int, payload: list[schemas.PermissionEntry], request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_permission(db, current_user, "group.permissions.manage", group_id=group_id, source_ip=source_ip(request))
     if not db.query(ServerGroupUserMembership).filter_by(server_group_id=group_id, user_id=user_id).first(): raise HTTPException(status.HTTP_404_NOT_FOUND, "Membership not found")
+    codes = [canonical_permission(item.permission) for item in payload]
+    if len(codes) != len(set(codes)): raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Duplicate permission entries")
     old = _permission_entries(db, group_id, user_id); db.query(UserGroupPermission).filter_by(server_group_id=group_id, user_id=user_id).delete()
     for item in payload:
         permission = _permission(db, item.permission)
         db.add(UserGroupPermission(server_group_id=group_id, user_id=user_id, permission_id=permission.id, allowed=item.effect == "allow", created_by_id=current_user.id, updated_by_id=current_user.id))
+    db.flush()
+    group = _group(db, group_id)
+    server_ids = [value for (value,) in db.query(ServerGroupMember.server_id).filter_by(server_group_id=group_id).all()]
+    _revoke_lost_server_access(db, group, server_ids, current_user, source_ip(request))
     write_audit(db, "server_group.user_permissions_updated", "Updated user group permissions", user_id=current_user.id, source_ip=source_ip(request), metadata={"group_id": group_id, "subject_user_id": user_id, "old": old, "new": [item.model_dump() for item in payload]})
     db.commit(); return payload
 
@@ -389,7 +432,7 @@ def copy_settings(group_id: int, source_group_id: int, request: Request, current
     if group_id == source_group_id: raise HTTPException(status.HTTP_400_BAD_REQUEST, "Groups must be different")
     target = _group(db, group_id); source = _group(db, source_group_id)
     require_permission(db, current_user, "group.permissions.manage", group_id=group_id); require_permission(db, current_user, "group.permissions.manage", group_id=source_group_id, conceal=True)
-    fields = set(schemas.AccessGroupBase.model_fields) - {"name", "description", "environment", "is_active"}
+    fields = set(schemas.AccessGroupBase.model_fields) - {"name", "description", "environment", "is_active", "enabled"}
     for field in fields: setattr(target, field, getattr(source, field))
     db.query(GroupPermission).filter_by(server_group_id=group_id).delete()
     for row in db.query(GroupPermission).filter_by(server_group_id=source_group_id).all(): db.add(GroupPermission(server_group_id=group_id, permission_id=row.permission_id, allowed=row.allowed, created_by_id=current_user.id))

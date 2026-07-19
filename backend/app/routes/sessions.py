@@ -177,7 +177,8 @@ def session_recording(session_id: int, request: Request, current_user: User = De
     session = db.get(Session, session_id)
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    if not _can_view(db, current_user, session):
+    recording_permission = "recordings.view_own" if session.user_id == current_user.id else "recordings.view_group"
+    if not is_global_admin(current_user) and not has_permission(db, current_user, recording_permission, server_id=session.server_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "view_recording", request, reason="Recording access requires MFA step-up", force=True)

@@ -100,7 +100,7 @@ def create_request(payload: schemas.AccessRequestCreate, request: Request, curre
         grant_id=None,
     )
     if decision.denied:
-        write_audit(db, "request.denied_by_policy", decision.message, user_id=current_user.id, server_id=server.id, request_id=item.id, source_ip=source_ip(request))
+        write_audit(db, "request.denied_by_policy", decision.message, user_id=current_user.id, server_id=server.id, request_id=item.id, source_ip=source_ip(request), result="denied")
     elif not decision.requires_approval and not decision.requires_mfa:
         create_grant_for_request(db, item, current_user, source_ip(request))
     db.commit()
@@ -134,7 +134,7 @@ def approve_request(request_id: int, payload: schemas.DecisionIn, request: Reque
     if decision.denied:
         item.denied_by_policy = True
         item.policy_decision_json = decision.to_json()
-        write_audit(db, "request.approval_denied_by_policy", decision.message, user_id=current_user.id, server_id=item.server_id, request_id=item.id, source_ip=source_ip(request))
+        write_audit(db, "request.approval_denied_by_policy", decision.message, user_id=current_user.id, server_id=item.server_id, request_id=item.id, source_ip=source_ip(request), result="denied")
         db.commit()
         raise HTTPException(status.HTTP_403_FORBIDDEN, decision.message)
     item.approver_id = current_user.id

@@ -28,6 +28,13 @@ def _can_view_grant(db: DBSession, user: User, grant_id: int) -> bool:
     return has_permission(db, user, permission, server_id=grant.server_id)
 
 
+def _can_view_recording(db: DBSession, user: User, recording: GatewayRecording) -> bool:
+    if is_global_admin(user):
+        return True
+    permission = "recordings.view_own" if recording.user_id == user.id else "recordings.view_group"
+    return has_permission(db, user, permission, server_id=recording.server_id)
+
+
 def _visible_connections(db: DBSession, user: User):
     query = db.query(GatewayConnection)
     if not is_global_admin(user):
@@ -112,7 +119,7 @@ def list_events(current_user: User = Depends(get_current_user), db: DBSession = 
 def list_recordings(current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
     query = db.query(GatewayRecording)
     if not is_global_admin(current_user):
-        own_ids = permitted_server_ids(db, current_user, "sessions.view_own") or set(); group_ids = permitted_server_ids(db, current_user, "sessions.view_group") or set()
+        own_ids = permitted_server_ids(db, current_user, "recordings.view_own") or set(); group_ids = permitted_server_ids(db, current_user, "recordings.view_group") or set()
         query = query.filter(((GatewayRecording.user_id == current_user.id) & GatewayRecording.server_id.in_(own_ids)) | GatewayRecording.server_id.in_(group_ids))
     return [_recording_out(item) for item in query.order_by(GatewayRecording.created_at.desc()).limit(1000).all()]
 
@@ -122,7 +129,7 @@ def get_recording(recording_id: int, current_user: User = Depends(get_current_us
     recording = db.get(GatewayRecording, recording_id)
     if not recording:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
-    if not _can_view_grant(db, current_user, recording.grant_id):
+    if not _can_view_recording(db, current_user, recording):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
     return _recording_out(recording)
 
@@ -132,7 +139,7 @@ def download_recording(recording_id: int, request: Request, current_user: User =
     recording = db.get(GatewayRecording, recording_id)
     if not recording:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
-    if not _can_view_grant(db, current_user, recording.grant_id):
+    if not _can_view_recording(db, current_user, recording):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
     if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "view_recording", request, reason="Recording download requires MFA step-up", force=True)
