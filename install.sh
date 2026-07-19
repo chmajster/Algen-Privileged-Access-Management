@@ -927,6 +927,19 @@ service_is_active() {
   fi
 }
 
+service_is_enabled() {
+  if [[ "$SYSTEMD_USER" -eq 1 ]]; then
+    systemctl --user is-enabled --quiet algen-pam.service 2>/dev/null
+  else
+    systemctl is-enabled --quiet algen-pam.service 2>/dev/null
+  fi
+}
+
+service_should_be_running() {
+  [[ "$CREATE_SERVICE" == "1" ]] \
+    || [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 ]] && service_exists
+}
+
 stop_service_if_needed() {
   if service_is_active; then
     SERVICE_WAS_ACTIVE=1
@@ -998,9 +1011,16 @@ validate_installation() {
   fi
   [[ -x "$BIN_PATH" ]] || abort "Launcher was not created at $BIN_PATH."
   "$BIN_PATH" --version >/dev/null || log "Version check is not supported."
-  if [[ "$CREATE_SERVICE" == "1" ]]; then
-    systemctl_cmd status algen-pam.service --no-pager || true
+  if service_should_be_running; then
+    service_exists || abort "The systemd service file was not created at $SERVICE_FILE."
+    service_is_enabled || abort "Application service is not enabled after installation/update."
+    service_is_active || {
+      systemctl_cmd status algen-pam.service --no-pager || true
+      abort "Application service is not active after installation/update."
+    }
+    systemctl_cmd status algen-pam.service --no-pager
     wait_for_health || abort "Application service started but http://127.0.0.1:$APP_PORT/api/health did not respond. Check $LOG_FILE and the systemd journal."
+    log "Systemd service is enabled, active, and responding correctly."
   else
     validate_temporary_server
   fi
@@ -1158,11 +1178,11 @@ install_app() {
   create_launcher
   create_service
   create_desktop_launcher
-  validate_installation
   if [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 && "$CREATE_SERVICE" != "1" && "$DRY_RUN" -eq 0 ]]; then
-    log "Restarting service that was active before update."
-    systemctl_cmd start algen-pam.service || true
+    log "Re-enabling and restarting service that was active before update."
+    systemctl_cmd enable --now algen-pam.service
   fi
+  validate_installation
   log "Installation complete."
 }
 
@@ -1241,7 +1261,12 @@ main() {
   fi
 
   if [[ "$CREATE_SERVICE" == "" ]]; then
-    CREATE_SERVICE=0
+    if [[ "$DO_UPDATE" -eq 1 ]] && service_exists; then
+      CREATE_SERVICE=1
+      log "Existing systemd integration detected; it will be recreated and verified after update."
+    else
+      CREATE_SERVICE=0
+    fi
   fi
   if [[ "$CREATE_DESKTOP" == "" ]]; then
     CREATE_DESKTOP=0
