@@ -66,12 +66,20 @@ Pełna deinstalacja wybrana z menu wymaga wpisania `USUN`. Jawne
 
 ## Instalacja silent
 
-Tryb silent nigdy nie wykonuje `read` ani nie otwiera TUI:
+Tryb silent nigdy nie wykonuje `read` ani nie otwiera TUI. Bez jawnego trybu
+automatycznie wybiera aktualizację, jeśli wykryje instalację, albo nową
+instalację w przeciwnym przypadku:
 
 ```bash
+./install.sh --silent
 ./install.sh --silent --yes --user --no-service
 sudo ./install.sh --silent --yes --system --service
 ```
+
+Samo `--silent` używa instalacji systemowej i dla nowej instalacji włącza usługę
+systemd. Dla istniejącej instalacji zachowuje dotychczasowy wybór usługi.
+Jawne operacje inne niż `install` i `update`, szczególnie usuwanie, nadal
+wymagają `--yes`.
 
 Brak wymaganej wartości albo konflikt portu kończy się błędem. Automatyczny wybór
 wolnego portu jest możliwy tylko po dodaniu `--auto-port`:

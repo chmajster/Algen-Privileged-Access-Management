@@ -40,4 +40,18 @@ MODE=reinstall; MODE_EXPLICIT=0; MODE_SELECTED_INTERACTIVELY=1
 interactive_mode_selection
 [[ "$MODE" == reinstall && "$MODE_SELECTED_INTERACTIVELY" -eq 1 ]]
 
+# Without an explicit mode the installer selects update only for an existing
+# installation; otherwise it selects a fresh install.
+installation_present() { return 0; }
+marker_valid() { return 0; }
+MODE=""
+determine_mode
+[[ "$MODE" == update ]]
+
+installation_present() { return 1; }
+marker_valid() { return 1; }
+MODE=""
+determine_mode
+[[ "$MODE" == install ]]
+
 printf 'Installer menu mapping tests passed.\n'

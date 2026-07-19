@@ -31,7 +31,7 @@ expect_failure 'invalid gateway port' --gateway-port 65536 --dry-run
 expect_failure 'unsafe root target' --install-dir / --dry-run
 expect_failure 'relative target' --install-dir relative/path --dry-run
 expect_failure 'newline in environment value' --admin-email $'admin@example.test\nINJECTED=yes' --dry-run
-expect_failure 'silent without consent' --silent --user
+expect_failure 'silent destructive mode without consent' --silent --uninstall --user
 
 if [[ "$(uname -s)" != Linux ]]; then
   echo "Installer syntax/parser tests passed; Linux dry runs skipped."
@@ -49,6 +49,8 @@ bash "$INSTALLER" --uninstall --system --keep-data --dry-run >/dev/null
 bash "$INSTALLER" --dry-run --uninstall >/dev/null
 bash "$INSTALLER" --silent --yes --user --no-service --dry-run >/dev/null
 bash "$INSTALLER" --silent --yes --system --service --dry-run >/dev/null
+bash "$INSTALLER" --silent --user --no-service --dry-run >/dev/null
+bash "$INSTALLER" --silent --system --dry-run >/dev/null
 
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S warning "$INSTALLER"

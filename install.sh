@@ -219,7 +219,10 @@ validate_arguments() {
   [[ -z "$TAG" || "$TAG" =~ ^[A-Za-z0-9._+-]+$ ]] || die "Invalid tag name."
   [[ "$REPO" != *$'\n'* && "$REPO" =~ ^(https://|ssh://|git@|file://|/|\./|\.\./) ]] || die "--repo must be an HTTPS/SSH Git URL or a local path."
   [[ "$LOCAL_AUTH_MODE" == os || "$LOCAL_AUTH_MODE" == database ]] || die "PAM_LOCAL_AUTH_MODE must be 'os' or 'database'."
-  [[ "$SILENT" -eq 0 || "$YES" -eq 1 || "$DRY_RUN" -eq 1 ]] || die "--silent requires --yes (except with --dry-run)."
+  if [[ "$SILENT" -eq 1 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
+    [[ -z "$MODE" || "$MODE" == install || "$MODE" == update ]] \
+      || die "Silent $MODE requires --yes. Without an explicit mode, --silent automatically installs or updates."
+  fi
   [[ -z "$INSTALL_DIR" ]] || validate_path_text "$INSTALL_DIR"
   if [[ -n "$ADMIN_USER" ]]; then [[ "$ADMIN_USER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]] || die "Invalid administrator username."; fi
   if [[ -n "$ADMIN_EMAIL" ]]; then [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid administrator email."; fi
@@ -490,8 +493,9 @@ Podsumowanie operacji
   Zachowanie konfiguracji: $preserve_config
 EOF
   [[ "$DRY_RUN" -eq 1 || "$AUTO_UPDATE_SELECTED" -eq 1 ]] && return 0
+  [[ "$SILENT" -eq 1 && ( "$MODE" == install || "$MODE" == update ) ]] && return 0
   if [[ "$YES" -eq 1 && ( "$MODE" != uninstall || "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]]; then return 0; fi
-  [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes."
+  [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes for this operation."
   have_tty || die "No interactive terminal available for confirmation."
   local answer; answer="$(read_from_tty "Kontynuować? [y/N]: ")" || die "Operacja anulowana."
   [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Operacja anulowana."
@@ -983,7 +987,15 @@ main() {
   [[ "$MODE" != cancel ]] || return 0
   interactive_install_prompts               # Pytania tekstowe wyłącznie dla nowej instalacji
   determine_mode
-  [[ -n "$SERVICE_CHOICE" ]] || { if [[ -f "$SERVICE_FILE" ]]; then SERVICE_CHOICE=1; else SERVICE_CHOICE=0; fi; }
+  if [[ -z "$SERVICE_CHOICE" ]]; then
+    if [[ -f "$SERVICE_FILE" ]]; then
+      SERVICE_CHOICE=1
+    elif [[ "$SILENT" -eq 1 && "$MODE" == install && "$SCOPE" == system ]]; then
+      SERVICE_CHOICE=1
+    else
+      SERVICE_CHOICE=0
+    fi
+  fi
   load_existing_configuration               # 7. Istniejąca konfiguracja
   validate_arguments                        # 8. Ponowna walidacja
   validate_ports

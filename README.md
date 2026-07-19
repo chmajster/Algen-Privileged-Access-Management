@@ -26,8 +26,10 @@ Instalator korzysta z `/dev/tty`, dlatego kreator interaktywny dziala rowniez,
 gdy skrypt jest przekazywany do Bash przez potok. Dla istniejacej instalacji
 pusty Enter wybiera aktualizacje, a brak wyboru przez 5 sekund uruchamia
 automatyczna, bezpieczna aktualizacje z zachowaniem konfiguracji i danych.
-Instalacja bez pytan jest dostepna przez
-`bash -s -- --silent --yes`.
+Instalacja bez pytan jest dostepna przez `bash -s -- --silent`. Tryb silent
+automatycznie wybiera aktualizacje wykrytej instalacji albo nowa instalacje,
+gdy aplikacji jeszcze nie ma. Nowa instalacja systemowa domyslnie uruchamia
+usluge systemd. Operacje usuwania nadal wymagaja jawnego `--yes`.
 Domyslnie wykonywana jest instalacja systemowa w `/opt/algen-pam`; wariant lokalny
 dla biezacego uzytkownika wymaga opcji `--user`.
 Z repozytorium HTTPS instalator pobiera i weryfikuje archiwum wybranego brancha
