@@ -60,14 +60,6 @@ on_interrupt() {
 }
 trap on_interrupt INT TERM
 
-attach_controlling_terminal() {
-  [[ -t 0 ]] && return 0
-  [[ -c /dev/tty ]] || return 0
-  if { exec 3</dev/tty; } 2>/dev/null; then
-    exec 0<&3
-  fi
-}
-
 usage() {
   cat <<'EOF'
 Linux PAM Lite installer
@@ -655,6 +647,19 @@ Desktop launcher: $CREATE_DESKTOP"
   ASSUME_YES=1
 }
 
+run_interactive_installer() {
+  if [[ -t 0 ]]; then
+    ui_flow
+    return 0
+  fi
+  if [[ -c /dev/tty ]] && { exec 9</dev/tty; } 2>/dev/null; then
+    ui_flow <&9
+    exec 9<&-
+    return 0
+  fi
+  abort "No interactive terminal detected. Use --silent --yes."
+}
+
 prepare_logging() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[dry-run] log file: $LOG_FILE"
@@ -1197,11 +1202,10 @@ EOF
 }
 
 main() {
-  attach_controlling_terminal
   parse_args "$@"
   detect_installed_scope
   if [[ "$SILENT" -eq 0 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]]; then
-    ui_flow
+    run_interactive_installer
   fi
   resolve_paths
 
