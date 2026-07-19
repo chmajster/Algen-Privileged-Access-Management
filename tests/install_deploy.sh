@@ -25,6 +25,23 @@ deployed_release_valid
 [[ -d "$INSTALL_DIR/backend" ]]
 [[ ! -e "$INSTALL_DIR/release" ]]
 
+# A legacy nested .env pointing at the configured file is recoverable, while
+# every other external symlink remains forbidden.
+marker_valid() {
+  [[ -f "$INSTALL_DIR/.algen-pam-install" ]] \
+    && grep -qx 'app=algen-pam' "$INSTALL_DIR/.algen-pam-install" \
+    && grep -Fqx "install_dir=$INSTALL_DIR" "$INSTALL_DIR/.algen-pam-install"
+}
+mkdir -p "$INSTALL_DIR/legacy"
+ln -s "$CONFIG_FILE" "$INSTALL_DIR/legacy/.env"
+safe_target
+ln -s /etc/passwd "$INSTALL_DIR/legacy/unsafe-link"
+if (safe_target) >/dev/null 2>&1; then
+  echo 'Unsafe external symlink was accepted.' >&2
+  exit 1
+fi
+rm "$INSTALL_DIR/legacy/unsafe-link"
+
 rm -rf -- "$deploy_root"
 STAGE_ROOT=""
 

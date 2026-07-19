@@ -781,10 +781,19 @@ safe_target() {
   [[ "$INSTALL_DIR" == /* && "$INSTALL_DIR" != / && ! -L "$INSTALL_DIR" ]] || die "Unsafe or symbolic installation target: $INSTALL_DIR"
   marker_valid || die "Refusing deletion: installation marker is absent or inconsistent."
   local resolved; resolved="$(readlink -f "$INSTALL_DIR")"; [[ "$resolved" == "$INSTALL_DIR" ]] || die "Installation path resolves outside its declared location."
-  if find "$INSTALL_DIR" -type l -print0 | while IFS= read -r -d '' link; do
-    local destination; destination="$(readlink -f "$link")"
-    [[ "$destination" == "$INSTALL_DIR"/* || ( "$link" == "$INSTALL_DIR/.env" && "$destination" == "$CONFIG_FILE" ) ]] || exit 1
-  done; then :; else die "Installation contains a symlink escaping the installation directory."; fi
+  local link destination
+  while IFS= read -r -d '' link; do
+    destination="$(readlink -f -- "$link" 2>/dev/null || true)"
+    if [[ "$destination" == "$INSTALL_DIR"/* ]]; then
+      continue
+    fi
+    # The current layout and the recoverable legacy INSTALL_DIR/release layout
+    # may both contain .env. It is safe only when it resolves to CONFIG_FILE.
+    if [[ "${link##*/}" == .env && "$destination" == "$CONFIG_FILE" ]]; then
+      continue
+    fi
+    die "Installation contains an unsafe symlink: $link -> ${destination:-unresolved}"
+  done < <(find "$INSTALL_DIR" -type l -print0)
 }
 create_system_user_if_needed() {
   [[ "$SCOPE" == system && "$TARGET_USER" == algen-pam ]] || return 0
