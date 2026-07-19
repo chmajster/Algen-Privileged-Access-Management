@@ -44,8 +44,8 @@ kończą się błędem.
 ./install.sh
 ```
 
-Przy istniejącej instalacji kreator (`whiptail`, `dialog` albo zwykły terminal)
-pokazuje menu:
+Przy istniejącej instalacji instalator pokazuje jednokrotnie tekstowe menu
+operacji odczytywane bezpiecznie z `/dev/tty`:
 
 1. aktualizacja aplikacji;
 2. reinstalacja;
@@ -54,9 +54,14 @@ pokazuje menu:
 5. pełna deinstalacja;
 6. anulowanie.
 
-Wybór i końcowe podsumowanie wymagają jawnego potwierdzenia. Zamknięcie okna,
-Ctrl+C, EOF albo brak terminala przerywa działanie. Przed zatwierdzeniem nie są
-wykonywane żadne operacje systemowe.
+Domyślnym wyborem jest aktualizacja. Pusty Enter wybiera ją natychmiast, a brak
+odpowiedzi przez 5 sekund uruchamia bezpieczną aktualizację automatycznie, bez
+drugiego potwierdzenia. Konfiguracja, dane i logi są zachowywane. Jawny tryb CLI
+ma zawsze pierwszeństwo i wyłącza menu. `whiptail` i `dialog` pozostają dostępne
+w kreatorze pierwszej instalacji.
+
+Pełna deinstalacja wybrana z menu wymaga wpisania `USUN`. Jawne
+`--uninstall --yes` może pominąć to potwierdzenie w trybie bezobsługowym.
 
 ## Instalacja silent
 
@@ -195,6 +200,7 @@ automatyczny. Backup ręczny można rozpakować przez `tar -xzf data.tar.gz -C
 ```bash
 bash -n install.sh
 shellcheck -S warning install.sh
+bash tests/install_menu.sh
 bash tests/install_smoke.sh
 bash tests/install_integration.sh
 ```

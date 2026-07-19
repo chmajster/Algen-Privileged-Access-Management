@@ -23,9 +23,10 @@ curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-M
 ```
 
 Instalator korzysta z `/dev/tty`, dlatego kreator interaktywny dziala rowniez,
-gdy skrypt jest przekazywany do Bash przez potok. Anulowanie okna TUI albo brak
-odpowiedzi zawsze przerywa operacje; instalator nigdy nie uruchamia aktualizacji
-na podstawie timeoutu. Instalacja bez pytan jest dostepna przez
+gdy skrypt jest przekazywany do Bash przez potok. Dla istniejacej instalacji
+pusty Enter wybiera aktualizacje, a brak wyboru przez 5 sekund uruchamia
+automatyczna, bezpieczna aktualizacje z zachowaniem konfiguracji i danych.
+Instalacja bez pytan jest dostepna przez
 `bash -s -- --silent --yes`.
 Domyslnie wykonywana jest instalacja systemowa w `/opt/algen-pam`; wariant lokalny
 dla biezacego uzytkownika wymaga opcji `--user`.
@@ -50,7 +51,8 @@ Po instalacji uruchamia test `/api/health`. Aplikacja nasluchuje domyslnie na
 `http://192.168.1.10:8080/` (o ile pozwala na to firewall).
 
 Ponowne uruchomienie interaktywne pokazuje menu aktualizacji, reinstalacji,
-backupu i usuwania oraz wymaga jawnego wyboru. Aktualizacja jest budowana w
+backupu i usuwania maksymalnie jeden raz. Jawny tryb CLI pomija menu.
+Aktualizacja jest budowana w
 katalogu stagingowym, a po przelaczeniu wydania przechodzi `/api/health`;
 niepowodzenie uruchamia automatyczny rollback. Stan `active` i `enabled` uslugi
 jest zachowywany. Haslo bootstrapu administratora nie pozostaje w `.env`.

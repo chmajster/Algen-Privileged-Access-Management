@@ -146,29 +146,29 @@ trap 'on_error "$LINENO" "$?"' ERR
 
 usage() {
   cat <<'EOF'
-Algen PAM safe installer
+Bezpieczny instalator Algen PAM
 
-Usage: ./install.sh [mode] [options]
+Użycie: ./install.sh [tryb] [opcje]
 
-Modes (exactly one; install/update is inferred when omitted):
-  --install              install a new instance
-  --update               stage and atomically update an existing instance
-  --reinstall            replace application files, preserving state
-  --backup               back up configuration and data
-  --remove-app           remove code and integration, preserve state
-  --uninstall            remove the complete installation
+Tryby (dokładnie jeden; bez trybu wybierana jest instalacja albo aktualizacja):
+  --install              nowa instalacja
+  --update               atomowa aktualizacja istniejącej instalacji
+  --reinstall            wymiana aplikacji z zachowaniem stanu
+  --backup               kopia konfiguracji i danych
+  --remove-app           usunięcie kodu i integracji z zachowaniem stanu
+  --uninstall            pełna deinstalacja
 
-Operation:  --silent --yes --dry-run --verbose --auto-port
-Target:     --user --system --install-dir PATH
+Operacja:   --silent --yes --dry-run --verbose --auto-port
+Zakres:     --user --system --install-dir PATH
              --service --no-service --desktop --no-desktop
-Network:    --port PORT --gateway-port PORT
-Source:     --repo URL_OR_PATH --branch NAME --tag NAME
+Sieć:       --port PORT --gateway-port PORT
+Źródło:     --repo URL_OR_PATH --branch NAME --tag NAME
 Admin:      --admin-user NAME --admin-email EMAIL
              --admin-password PASS --generate-admin-password
-Removal:    --keep-config --keep-data --keep-logs
-Other:      --help, -h
+Usuwanie:   --keep-config --keep-data --keep-logs
+Inne:       --help, -h
 
-Compatibility examples:
+Przykłady:
   ./install.sh
   ./install.sh --silent --yes --user --no-service
   ./install.sh --silent --yes --system --service
@@ -306,6 +306,7 @@ determine_mode() {
   esac
 }
 require_privileges() {
+  [[ "$DRY_RUN" -eq 0 ]] || return 0
   [[ "$SCOPE" == user || "$(id -u)" -eq 0 || -x "$(command -v sudo 2>/dev/null || true)" ]] || die "System mode requires root or sudo."
 }
 as_root() {
@@ -473,7 +474,7 @@ ui_yesno() {
   else answer="$(read_from_tty "$prompt [y/N]: ")" || return 1; [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]; fi
 }
 interactive_install_wizard() {
-  [[ "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
+  [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
   marker_valid && return 0
   have_tty || die "No interactive terminal. Use --silent --yes with explicit options."
   local choice="" value=""

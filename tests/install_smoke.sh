@@ -16,6 +16,7 @@ bash -n "$INSTALLER"
 bash "$INSTALLER" --help >/dev/null
 bash "$INSTALLER" --help | grep -F -- '--reinstall' >/dev/null
 bash "$INSTALLER" --help | grep -F -- '--remove-app' >/dev/null
+bash "$ROOT_DIR/tests/install_menu.sh"
 
 expect_failure 'conflicting modes' --update --uninstall --dry-run
 expect_failure 'conflicting scopes' --user --system --dry-run
@@ -34,7 +35,12 @@ fi
 
 bash "$INSTALLER" --dry-run --user >/dev/null
 bash "$INSTALLER" --dry-run --system >/dev/null
+bash "$INSTALLER" --install --system --service --dry-run >/dev/null
 bash "$INSTALLER" --dry-run --update >/dev/null
+bash "$INSTALLER" --reinstall --system --dry-run >/dev/null
+bash "$INSTALLER" --backup --system --dry-run >/dev/null
+bash "$INSTALLER" --remove-app --system --dry-run >/dev/null
+bash "$INSTALLER" --uninstall --system --keep-data --dry-run >/dev/null
 bash "$INSTALLER" --dry-run --uninstall >/dev/null
 bash "$INSTALLER" --silent --yes --user --no-service --dry-run >/dev/null
 bash "$INSTALLER" --silent --yes --system --service --dry-run >/dev/null

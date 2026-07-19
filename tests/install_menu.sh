@@ -21,13 +21,13 @@ assert_mapping 3 backup
 assert_mapping 4 remove-app
 assert_mapping 5 uninstall
 
-MODE=""; set +e; map_existing_action 6; status=$?; set -e
+MODE=""; if map_existing_action 6; then status=0; else status=$?; fi
 [[ "$status" -eq 2 && "$MODE" == cancel ]]
 
 assert_mapping __timeout__ update
 [[ "$AUTO_UPDATE_SELECTED" -eq 1 ]]
 
-MODE=""; set +e; map_existing_action invalid; status=$?; set -e
+MODE=""; if map_existing_action invalid; then status=0; else status=$?; fi
 [[ "$status" -eq 1 && -z "$MODE" ]]
 
 printf 'Installer menu mapping tests passed.\n'
