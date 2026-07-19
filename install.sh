@@ -29,13 +29,14 @@ LOG_FILE=""
 INSTALL_OWNER="${SUDO_USER:-${USER:-$(id -un)}}"
 SERVICE_WAS_ACTIVE=0
 TEMP_SERVER_PID=""
-ADMIN_USER="${PAM_DEFAULT_ADMIN_USER:-admin}"
-ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-admin@example.local}"
+ADMIN_USER="${PAM_DEFAULT_ADMIN_USER:-$INSTALL_OWNER}"
+ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}"
 ADMIN_PASSWORD="${PAM_DEFAULT_ADMIN_PASSWORD:-}"
 ADMIN_PASSWORD_GENERATED=0
 ADMIN_PASSWORD_SUPPLIED=0
 ADMIN_BOOTSTRAP=1
 UPDATE_ADMIN_PASSWORD=0
+LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
 APP_PORT="${ALGEN_PAM_PORT:-8080}"
 APP_HOST="0.0.0.0"
 GATEWAY_PORT="${PAM_GATEWAY_PORT:-2222}"
@@ -632,12 +633,16 @@ ui_flow() {
     choose_existing_install_action
     return 0
   fi
-  ADMIN_USER="$(ui_input "Admin account" "Admin username" "$ADMIN_USER")"
+  ADMIN_USER="$(ui_input "Admin account" "Linux operating-system username for the application administrator" "$ADMIN_USER")"
   ADMIN_EMAIL="$(ui_input "Admin account" "Admin email" "$ADMIN_EMAIL")"
-  ADMIN_PASSWORD="$(ui_password "Admin account" "Admin password. Leave empty to generate one.")"
+  if [[ "$LOCAL_AUTH_MODE" == "database" ]]; then
+    ADMIN_PASSWORD="$(ui_password "Admin account" "Application password. Leave empty to generate one.")"
+  else
+    ADMIN_PASSWORD=""
+  fi
   if [[ -z "$ADMIN_PASSWORD" ]]; then
     ADMIN_PASSWORD="$(generate_password)"
-    ADMIN_PASSWORD_GENERATED=1
+    [[ "$LOCAL_AUTH_MODE" == "database" ]] && ADMIN_PASSWORD_GENERATED=1
   else
     ADMIN_PASSWORD_SUPPLIED=1
     UPDATE_ADMIN_PASSWORD=1
@@ -661,6 +666,7 @@ Log file: $LOG_FILE
 HTTP port: $APP_PORT
 SSH gateway port: $GATEWAY_PORT
 Admin user: $ADMIN_USER <$ADMIN_EMAIL>
+Local login: Linux OS account via PAM
 systemd service: $CREATE_SERVICE
 Desktop launcher: $CREATE_DESKTOP"
   ui_msg "Summary" "$summary"
@@ -828,6 +834,10 @@ configure_app() {
 
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_USER" "$ADMIN_USER"
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_EMAIL" "$ADMIN_EMAIL"
+  set_env_value "$CONFIG_FILE" "PAM_LOCAL_AUTH_MODE" "$LOCAL_AUTH_MODE"
+  set_env_value "$CONFIG_FILE" "PAM_OS_PAM_SERVICE" "login"
+  set_env_value "$CONFIG_FILE" "PAM_OS_ADMIN_USERS" "$ADMIN_USER"
+  set_env_value "$CONFIG_FILE" "PAM_OS_AUTO_PROVISION" "true"
   set_env_value "$CONFIG_FILE" "ALGEN_PAM_HOST" "$APP_HOST"
   set_env_value "$CONFIG_FILE" "ALGEN_PAM_PORT" "$APP_PORT"
   set_env_value "$CONFIG_FILE" "PAM_GATEWAY_PORT" "$GATEWAY_PORT"

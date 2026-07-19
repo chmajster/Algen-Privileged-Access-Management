@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 
 from app.config import settings
 from app.database import SessionLocal
@@ -37,6 +38,43 @@ def test_login(client):
     response = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert response.status_code == 200
     assert response.json()["access_token"]
+
+
+def test_local_os_account_login_and_auto_provision(client, monkeypatch):
+    from app.identity import local_provider
+
+    monkeypatch.setattr(settings, "pam_local_auth_mode", "os")
+    monkeypatch.setattr(settings, "pam_os_admin_users", "root")
+    monkeypatch.setattr(local_provider, "_os_account", lambda username: SimpleNamespace(pw_uid=1001, pw_gecos="System User"))
+    monkeypatch.setattr(local_provider, "authenticate_os_account", lambda username, password: username == "system_user" and password == "os-password")
+
+    response = client.post("/api/auth/login", json={"username": "system_user", "password": "os-password", "provider": "local"})
+    assert response.status_code == 200, response.text
+    assert response.json()["access_token"]
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == "system_user").first()
+        assert user is not None
+        assert user.external_id == "uid:1001"
+        assert user.display_name == "System User"
+        assert user.role == "user"
+    finally:
+        db.close()
+
+
+def test_local_os_backend_error_returns_503(client, monkeypatch):
+    from app.identity import local_provider
+
+    monkeypatch.setattr(settings, "pam_local_auth_mode", "os")
+    monkeypatch.setattr(local_provider, "_os_account", lambda username: SimpleNamespace(pw_uid=1001, pw_gecos="System User"))
+
+    def unavailable(username, password):
+        raise local_provider.LocalAuthenticationBackendError("unavailable")
+
+    monkeypatch.setattr(local_provider, "authenticate_os_account", unavailable)
+    response = client.post("/api/auth/login", json={"username": "system_user", "password": "password", "provider": "local"})
+    assert response.status_code == 503
+    assert "PAM" in response.json()["detail"]
 
 
 def test_local_login_with_mfa(client):

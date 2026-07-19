@@ -8,6 +8,7 @@ from app.auth import get_current_user, source_ip
 from app.config import settings
 from app.database import get_db
 from app.identity.oidc_provider import authenticate_oidc_callback, oidc_login_url
+from app.identity.local_provider import LocalAuthenticationBackendError
 from app.identity.providers import authenticate_with_provider
 from app.mfa.challenge import create_challenge, write_auth_event
 from app.models import User, utcnow
@@ -20,9 +21,15 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/login", response_model=schemas.Token)
 def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     provider = payload.provider or settings.pam_default_auth_provider
-    user, _ = authenticate_with_provider(db, provider, payload.username, payload.password)
     ip = source_ip(request)
     user_agent = request.headers.get("user-agent")
+    try:
+        user, _ = authenticate_with_provider(db, provider, payload.username, payload.password)
+    except LocalAuthenticationBackendError:
+        db.rollback()
+        write_auth_event(db, "login_backend_error", provider=provider, success=False, source_ip=ip, user_agent=user_agent, message="Linux PAM authentication backend unavailable")
+        db.commit()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Linux PAM authentication is unavailable; check the service journal")
     locked_until = user.locked_until if user and user.locked_until and user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc) if user and user.locked_until else None
     if user and locked_until and locked_until > utcnow():
         write_auth_event(db, "account_locked", user=user, provider=provider, success=False, source_ip=ip, user_agent=user_agent, message="Account locked")

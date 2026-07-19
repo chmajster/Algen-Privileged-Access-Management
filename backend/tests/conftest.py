@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 os.environ["DATABASE_URL"] = "sqlite:///./test_pam_lite.db"
 os.environ["PAM_EXECUTOR_MODE"] = "mock"
 os.environ["SECRET_KEY"] = "test-secret"
+os.environ["PAM_LOCAL_AUTH_MODE"] = "database"
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
