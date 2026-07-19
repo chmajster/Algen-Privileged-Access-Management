@@ -57,8 +57,9 @@ operacji odczytywane bezpiecznie z `/dev/tty`:
 Domyślnym wyborem jest aktualizacja. Pusty Enter wybiera ją natychmiast, a brak
 odpowiedzi przez 5 sekund uruchamia bezpieczną aktualizację automatycznie, bez
 drugiego potwierdzenia. Konfiguracja, dane i logi są zachowywane. Jawny tryb CLI
-ma zawsze pierwszeństwo i wyłącza menu. `whiptail` i `dialog` pozostają dostępne
-w kreatorze pierwszej instalacji.
+ma zawsze pierwszeństwo i wyłącza menu. Kreator pierwszej instalacji używa tylko
+zwykłych komunikatów i pytań tekstowych w terminalu. Nie używa kolorów,
+`whiptail`, `dialog` ani sekwencji sterujących ANSI.
 
 Pełna deinstalacja wybrana z menu wymaga wpisania `USUN`. Jawne
 `--uninstall --yes` może pominąć to potwierdzenie w trybie bezobsługowym.

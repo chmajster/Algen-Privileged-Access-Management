@@ -60,12 +60,6 @@ MUTATIONS_STARTED=0
 CURRENT_STEP="Uruchamianie instalatora"
 ERROR_REPORTED=0
 
-if [[ -t 2 && "$SILENT" -eq 0 ]]; then
-  COLOR_BLUE=$'\033[34m'; COLOR_GREEN=$'\033[32m'; COLOR_YELLOW=$'\033[33m'; COLOR_RED=$'\033[31m'; COLOR_BOLD=$'\033[1m'; COLOR_RESET=$'\033[0m'
-else
-  COLOR_BLUE=""; COLOR_GREEN=""; COLOR_YELLOW=""; COLOR_RED=""; COLOR_BOLD=""; COLOR_RESET=""
-fi
-
 # ---- logging, errors, and cleanup ------------------------------------------
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 emit() {
@@ -73,10 +67,7 @@ emit() {
   [[ "$level" != DEBUG || "$VERBOSE" -eq 1 ]] || return 0
   local line
   line="[$(timestamp)] [$level] $*"
-  local color=""
-  case "$level" in INFO) color="$COLOR_BLUE";; OK) color="$COLOR_GREEN";; WARN) color="$COLOR_YELLOW";; ERROR) color="$COLOR_RED";; esac
-  [[ "$SILENT" -eq 0 ]] || color=""
-  printf '%b%s%b\n' "$color" "$line" "$COLOR_RESET" >&2
+  printf '%s\n' "$line" >&2
   if [[ -n "$LOG_FILE" && -f "$LOG_FILE" && "$DRY_RUN" -eq 0 ]]; then
     printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null || true
   fi
@@ -87,21 +78,11 @@ warn() { emit WARN "$@"; }
 debug() { emit DEBUG "$@"; }
 section() {
   CURRENT_STEP="$1"
-  printf '\n%b==> %s%b\n' "$COLOR_BOLD" "$1" "$COLOR_RESET" >&2
+  printf '\n%s\n' "$1" >&2
 }
 banner() {
   [[ "$SILENT" -eq 0 ]] || return 0
-  cat >&2 <<'EOF'
-    _    _                    ____   _    __  __
-   / \  | | __ _  ___ _ __  |  _ \ / \  |  \/  |
-  / _ \ | |/ _` |/ _ \ '_ \ | |_) / _ \ | |\/| |
- / ___ \| | (_| |  __/ | | ||  __/ ___ \| |  | |
-/_/   \_\_|\__, |\___|_| |_||_| /_/   \_\_|  |_|
-           |___/
-
-Algen Privileged Access Management
-Bezpieczny instalator Linux
-EOF
+  printf '%s\n' 'Algen PAM - instalator Linux' >&2
 }
 die() {
   ERROR_REPORTED=1
@@ -227,7 +208,7 @@ parse_args() {
   done
 }
 valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
-validate_path_text() { [[ "$1" != *$'\n'* && "$1" != *$'\r'* && "$1" != *$'\0'* ]] || die "Path contains a forbidden control character."; }
+validate_path_text() { [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]] || die "Path contains a forbidden control character."; }
 validate_arguments() {
   [[ "$(uname -s)" == Linux || "$DRY_RUN" -eq 1 ]] || die "This installer supports Linux only."
   valid_port "$APP_PORT" || die "--port must be an integer from 1 to 65535."
@@ -304,6 +285,7 @@ determine_mode() {
     update|backup|remove-app|uninstall) installation_present || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode '$MODE' requires a valid installation marker in $INSTALL_DIR."; } ;;
     reinstall) marker_valid || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode 'reinstall' requires a valid installation marker in $INSTALL_DIR."; } ;;
   esac
+  return 0
 }
 require_privileges() {
   [[ "$DRY_RUN" -eq 0 ]] || return 0
@@ -354,7 +336,7 @@ install_dependencies() {
   python_ok && venv_ok || die "Python 3.12 with venv is required and could not be prepared."
 }
 
-# ---- UI -------------------------------------------------------------------
+# ---- simple terminal interface --------------------------------------------
 have_tty() { [[ -t 0 || -r /dev/tty ]]; }
 read_from_tty() {
   local prompt="$1" answer=""
@@ -363,22 +345,10 @@ read_from_tty() {
   printf '%s' "$answer"
 }
 read_from_tty_timeout() {
-  local prompt="$1" timeout="$2" answer="" key="" deadline remaining
+  local prompt="$1" timeout="$2" answer=""
   [[ -e /dev/tty && "$timeout" =~ ^[1-9][0-9]*$ ]] || return 1
-  deadline=$((SECONDS + timeout))
-  while (( (remaining = deadline - SECONDS) > 0 )); do
-    printf '\r\033[2K%s — automatyczna aktualizacja za %s s: %s' "$prompt" "$remaining" "$answer" >/dev/tty
-    key=""
-    if IFS= read -r -s -n 1 -t 1 key </dev/tty; then
-      case "$key" in
-        "") printf '\r\033[2K%s: %s\n' "$prompt" "$answer" >/dev/tty; printf '%s' "$answer"; return 0 ;;
-        $'\b'|$'\177') [[ -z "$answer" ]] || answer="${answer%?}" ;;
-        *) answer+="$key" ;;
-      esac
-    fi
-  done
-  printf '\r\033[2K' >/dev/tty
-  return 1
+  read -r -t "$timeout" -p "$prompt (automatyczny wybór za ${timeout}s): " answer </dev/tty || return 1
+  printf '%s' "$answer"
 }
 map_existing_action() {
   case "${1:-}" in
@@ -405,23 +375,11 @@ Logi:               $LOG_DIR
 
 Wybierz operację:
 
-  1) Aktualizuj aplikację
-     Pobierz nową wersję i zachowaj konfigurację, dane oraz logi.
-
-  2) Przeinstaluj aplikację
-     Zastąp pliki aplikacji i środowisko Python.
-     Zachowaj konfigurację, dane oraz logi.
-
+  1) Aktualizuj
+  2) Przeinstaluj
   3) Utwórz kopię bezpieczeństwa
-     Wykonaj kopię konfiguracji i danych bez zmiany aplikacji.
-
-  4) Usuń aplikację
-     Usuń kod, launcher, usługę systemd i skrót desktopowy.
-     Zachowaj konfigurację, dane oraz logi.
-
+  4) Usuń aplikację, zachowaj dane
   5) Usuń całą instalację
-     Usuń aplikację, konfigurację, dane, logi i integracje systemowe.
-
   6) Anuluj
 
 EOF
@@ -457,21 +415,15 @@ interactive_mode_selection() {
 }
 ui_input() {
   local title="$1" prompt="$2" default="$3" result=""
-  if command -v whiptail >/dev/null && have_tty; then
-    result="$(whiptail --title "$title" --inputbox "$prompt" 10 72 "$default" 3>&1 1>&2 2>&3)" || return 1
-  elif command -v dialog >/dev/null && have_tty; then
-    result="$(dialog --stdout --title "$title" --inputbox "$prompt" 10 72 "$default")" || return 1
-  else
-    result="$(read_from_tty "$prompt [$default]: ")" || return 1
-    result="${result:-$default}"
-  fi
+  : "$title"
+  result="$(read_from_tty "$prompt [$default]: ")" || return 1
+  result="${result:-$default}"
   printf '%s' "$result"
 }
 ui_yesno() {
   local prompt="$1" answer=""
-  if command -v whiptail >/dev/null && have_tty; then whiptail --title "Algen PAM" --yesno "$prompt" 9 72
-  elif command -v dialog >/dev/null && have_tty; then dialog --title "Algen PAM" --yesno "$prompt" 9 72
-  else answer="$(read_from_tty "$prompt [y/N]: ")" || return 1; [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]; fi
+  answer="$(read_from_tty "$prompt [y/N]: ")" || return 1
+  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
 }
 interactive_install_wizard() {
   [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
@@ -479,14 +431,9 @@ interactive_install_wizard() {
   have_tty || die "No interactive terminal. Use --silent --yes with explicit options."
   local choice="" value=""
   if [[ "$SCOPE_EXPLICIT" -eq 0 ]]; then
-    if command -v whiptail >/dev/null; then
-      choice=$(whiptail --title "Algen PAM" --menu "Choose installation scope" 14 68 2 1 "System-wide (/opt/algen-pam)" 2 "Current user" 3>&1 1>&2 2>&3) || die "Operation cancelled."
-    elif command -v dialog >/dev/null; then
-      choice=$(dialog --stdout --title "Algen PAM" --menu "Choose installation scope" 14 68 2 1 "System-wide (/opt/algen-pam)" 2 "Current user") || die "Operation cancelled."
-    else
-      printf '%s\n' '1) System-wide (/opt/algen-pam)' '2) Current user' >/dev/tty
-      read -r -p 'Scope [1-2]: ' choice </dev/tty || die "Operation cancelled."
-    fi
+    printf '%s\n' '1) Instalacja systemowa (/opt/algen-pam)' '2) Instalacja użytkownika' >/dev/tty
+    choice="$(read_from_tty "Zakres [1]: ")" || die "Operacja anulowana."
+    choice="${choice:-1}"
     case "$choice" in 1) SCOPE=system;; 2) SCOPE=user;; *) die "Invalid scope selection.";; esac
     resolve_identity; resolve_paths
   fi
@@ -500,15 +447,9 @@ interactive_install_wizard() {
   if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then ui_yesno "Utworzyć skrót desktopowy?" && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(ui_input "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(ui_input "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
-  if command -v whiptail >/dev/null; then
-    choice="$(whiptail --title "Algen PAM" --menu "Lokalny tryb uwierzytelniania" 14 72 2 1 "Linux PAM / konto systemowe" 2 "Baza danych aplikacji" 3>&1 1>&2 2>&3)" || die "Operacja anulowana."
-  elif command -v dialog >/dev/null; then
-    choice="$(dialog --stdout --title "Algen PAM" --menu "Lokalny tryb uwierzytelniania" 14 72 2 1 "Linux PAM / konto systemowe" 2 "Baza danych aplikacji")" || die "Operacja anulowana."
-  else
-    printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
-    choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
-    choice="${choice:-1}"
-  fi
+  printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
+  choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
+  choice="${choice:-1}"
   case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
   [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(ui_input "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
   [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(ui_input "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
@@ -516,10 +457,8 @@ interactive_install_wizard() {
     if ui_yesno "Wygenerować bezpieczne hasło administratora automatycznie?"; then
       ADMIN_PASSWORD_GENERATED=1
     else
-      if command -v whiptail >/dev/null; then ADMIN_PASSWORD="$(whiptail --title "Algen PAM" --passwordbox "Hasło administratora (minimum 12 znaków)" 10 72 3>&1 1>&2 2>&3)" || die "Operacja anulowana."
-      elif command -v dialog >/dev/null; then ADMIN_PASSWORD="$(dialog --stdout --title "Algen PAM" --insecure --passwordbox "Hasło administratora (minimum 12 znaków)" 10 72)" || die "Operacja anulowana."
-      else read -r -s -p 'Hasło administratora (minimum 12 znaków): ' ADMIN_PASSWORD </dev/tty || die "Operacja anulowana."; printf '\n' >/dev/tty
-      fi
+      read -r -s -p 'Hasło administratora (minimum 12 znaków): ' ADMIN_PASSWORD </dev/tty || die "Operacja anulowana."
+      printf '\n' >/dev/tty
       ADMIN_PASSWORD_SUPPLIED=1
     fi
   fi

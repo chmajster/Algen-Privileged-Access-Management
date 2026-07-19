@@ -34,8 +34,8 @@ Z repozytorium HTTPS instalator pobiera i weryfikuje archiwum wybranego brancha
 lub taga, więc Git nie jest wymagany. Adres SSH korzysta z jawnego `git fetch` i
 checkoutu wskazanej rewizji. Katalog `.git` nie trafia do instalacji.
 
-Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
-instalacji CLI:
+Po sklonowaniu repozytorium mozesz tez uzyc prostego kreatora tekstowego albo
+cichej instalacji CLI. Kreator nie używa kolorów, `whiptail` ani `dialog`:
 
 ```bash
 ./install.sh

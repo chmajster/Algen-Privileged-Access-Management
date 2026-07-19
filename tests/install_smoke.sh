@@ -18,6 +18,11 @@ bash "$INSTALLER" --help | grep -F -- '--reinstall' >/dev/null
 bash "$INSTALLER" --help | grep -F -- '--remove-app' >/dev/null
 bash "$ROOT_DIR/tests/install_menu.sh"
 
+if grep -Eq 'COLOR_|whiptail|dialog|\\033|\\e\[' "$INSTALLER"; then
+  echo 'Installer contains terminal colors or TUI dependencies.' >&2
+  exit 1
+fi
+
 expect_failure 'conflicting modes' --update --uninstall --dry-run
 expect_failure 'conflicting scopes' --user --system --dry-run
 expect_failure 'conflicting source refs' --branch develop --tag v1 --dry-run
