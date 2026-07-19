@@ -92,9 +92,9 @@ Optional integration:
   --no-desktop          skip desktop launcher creation
 
 Admin bootstrap:
-  --admin-user NAME     create or update this local admin account
+  --admin-user NAME     existing Linux OS account granted application admin role
   --admin-email EMAIL   email address for the local admin account
-  --admin-password PASS password for the local admin account
+  --admin-password PASS legacy database-auth password (database mode only)
   --generate-admin-password
                        generate a random admin password
 
@@ -113,7 +113,7 @@ Other:
 Examples:
   ./install.sh
   ./install.sh --silent --yes --user --no-service
-  ./install.sh --silent --yes --admin-user admin --admin-password 'change-me-now'
+  ./install.sh --silent --yes --admin-user "$(id -un)"
   ./install.sh --silent --install-dir /opt/algen-pam --system --service --yes
   ./install.sh --update --system --yes
   ./install.sh --uninstall --user --yes
@@ -415,6 +415,9 @@ ensure_admin_settings() {
   fi
   [[ -n "$ADMIN_USER" ]] || abort "Admin username cannot be empty."
   [[ -n "$ADMIN_EMAIL" ]] || abort "Admin email cannot be empty."
+  if [[ "$LOCAL_AUTH_MODE" == "os" && "$DRY_RUN" -eq 0 ]] && ! id "$ADMIN_USER" >/dev/null 2>&1; then
+    abort "Linux operating-system account '$ADMIN_USER' does not exist. Create it first or choose an existing account."
+  fi
 }
 
 detect_package_manager() {
@@ -666,7 +669,7 @@ Log file: $LOG_FILE
 HTTP port: $APP_PORT
 SSH gateway port: $GATEWAY_PORT
 Admin user: $ADMIN_USER <$ADMIN_EMAIL>
-Local login: Linux OS account via PAM
+Local authentication mode: $LOCAL_AUTH_MODE
 systemd service: $CREATE_SERVICE
 Desktop launcher: $CREATE_DESKTOP"
   ui_msg "Summary" "$summary"
@@ -1193,7 +1196,13 @@ install_app() {
 
 print_final_info() {
   local network_ip
+  local login_hint
   network_ip="$(primary_ip_address)"
+  if [[ "$LOCAL_AUTH_MODE" == "os" ]]; then
+    login_hint="Use the Linux operating-system password for $ADMIN_USER (authenticated by PAM)."
+  else
+    login_hint="Use the application password configured during installation."
+  fi
   cat <<EOF
 
 $APP_TITLE is ready.
@@ -1215,6 +1224,9 @@ Config:
 
 Admin:
   $ADMIN_USER <$ADMIN_EMAIL>
+
+Local login:
+  $login_hint
 
 Log:
   $LOG_FILE

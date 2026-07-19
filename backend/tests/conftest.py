@@ -8,6 +8,9 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_pam_lite.db"
 os.environ["PAM_EXECUTOR_MODE"] = "mock"
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["PAM_LOCAL_AUTH_MODE"] = "database"
+os.environ["PAM_DEFAULT_ADMIN_USER"] = "admin"
+os.environ["PAM_DEFAULT_ADMIN_EMAIL"] = "admin@example.local"
+os.environ["PAM_DEFAULT_ADMIN_PASSWORD"] = "admin123"
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402

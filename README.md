@@ -35,7 +35,7 @@ instalacji CLI:
 
 ```bash
 ./install.sh
-./install.sh --silent --yes --user --no-service --admin-user admin --admin-password 'zmien-to-haslo'
+./install.sh --silent --yes --user --no-service --admin-user "$(id -un)"
 ./install.sh --silent --yes --system --service --install-dir /opt/algen-pam
 ```
 
@@ -54,7 +54,9 @@ instalator sprawdza jej stan `enabled`, `active` oraz endpoint `/api/health`.
 
 Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
 
-Instalator tworzy lokalne konto admina aplikacji. Po zalogowaniu admin ma dostep do panelu zarzadzania uzytkownikami, policy, policy engine, sekretami, alertami, tozsamoscia, ustawieniami i audit logami.
+Instalator przypisuje role administratora wskazanemu, istniejacemu kontu systemu
+Linux. Do logowania uzywane jest haslo tego konta w systemie operacyjnym; aplikacja
+nie tworzy ani nie zmienia jego hasla.
 
 ### Wymagania
 
@@ -108,6 +110,9 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 Otwórz http://127.0.0.1:8080.
 
 Domyślne dane logowania:
+
+Na Windows albo do uruchomienia danych demo ustaw
+`PAM_LOCAL_AUTH_MODE=database` w `.env`. Wtedy dostepne sa dane:
 
 - `admin` / `admin123`
 - `approver` / `approver123`
@@ -458,6 +463,10 @@ Linux PAM Lite obsluguje lokalne konta oraz przygotowane integracje LDAP/Active 
 ```env
 PAM_AUTH_PROVIDERS=local,ldap,oidc
 PAM_DEFAULT_AUTH_PROVIDER=local
+PAM_LOCAL_AUTH_MODE=os
+PAM_OS_PAM_SERVICE=login
+PAM_OS_ADMIN_USERS=root
+PAM_OS_AUTO_PROVISION=true
 PAM_MFA_ENABLED=true
 PAM_MFA_ISSUER=Linux PAM Lite
 PAM_MFA_REQUIRED_FOR_ADMIN=true
@@ -471,7 +480,21 @@ PAM_STEP_UP_TTL_SECONDS=900
 
 ### Local auth
 
-Local auth sprawdza `users.password_hash`. Jesli konto ma wlaczone MFA, backend po poprawnym hasle tworzy `mfa_challenges`, zwraca `mfa_required=true` oraz krotkotrwaly `mfa_token`. Pelny JWT jest wydawany dopiero po poprawnym TOTP albo jednorazowym recovery code.
+Domyslny local auth (`PAM_LOCAL_AUTH_MODE=os`) uwierzytelnia prawdziwe konto
+lokalne systemu Linux przez PAM i usluge z `PAM_OS_PAM_SERVICE`. Haslo systemowe
+nie jest zapisywane w bazie aplikacji. Po pierwszym poprawnym logowaniu konto jest
+automatycznie tworzone w tabeli `users`, gdzie przechowywane sa tylko rola, MFA i
+metadane. Uzytkownicy wymienieni w `PAM_OS_ADMIN_USERS` otrzymuja role `admin`.
+
+Proces bez uprawnien moze zwykle sprawdzac przez `pam_unix` tylko haslo konta, na
+ktorym sam dziala. Uwierzytelnianie wielu lokalnych kont wymaga odpowiednio
+uprzywilejowanego stosu PAM, na przyklad SSSD. Niedostepny backend PAM zwraca HTTP
+503 zamiast niekontrolowanego bledu 500.
+
+Tryb `PAM_LOCAL_AUTH_MODE=database` pozostaje dostepny tylko jako jawna opcja
+zgodnosci wstecznej. Jesli konto ma wlaczone MFA, backend po poprawnym
+uwierzytelnieniu tworzy `mfa_challenges`; pelny JWT jest wydawany dopiero po TOTP
+albo jednorazowym recovery code.
 
 Konto moze zostac czasowo zablokowane po kilku nieudanych logowaniach (`locked_until`). Logi uwierzytelniania trafiaja do `auth_events` i nie zawieraja hasel, tokenow, sekretow TOTP ani kodow recovery.
 

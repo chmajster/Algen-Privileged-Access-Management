@@ -668,6 +668,7 @@ function renderSettings() {
       <dt class="col-sm-4">Risk thresholds</dt><dd class="col-sm-8">medium ${s.medium_risk_score}, high ${s.high_risk_score}, critical ${s.critical_risk_score}</dd>
       <dt class="col-sm-4">Auto revoke on critical risk</dt><dd class="col-sm-8">${s.auto_revoke_on_critical_risk ? "enabled" : "disabled"}</dd>
       <dt class="col-sm-4">Auth providers</dt><dd class="col-sm-8">${escapeHtml(s.auth_providers)} (default ${escapeHtml(s.default_auth_provider)})</dd>
+      <dt class="col-sm-4">Local authentication</dt><dd class="col-sm-8">${escapeHtml(s.local_auth_mode)}${s.local_auth_mode === "os" ? ` via PAM service <code>${escapeHtml(s.os_pam_service)}</code>` : ""}</dd>
       <dt class="col-sm-4">MFA</dt><dd class="col-sm-8">${s.mfa_enabled ? "enabled" : "disabled"}; issuer ${escapeHtml(s.mfa_issuer)}</dd>
       <dt class="col-sm-4">MFA policies</dt><dd class="col-sm-8">admin ${s.mfa_required_for_admin ? "on" : "off"}, prod ${s.mfa_required_for_prod ? "on" : "off"}, full_sudo ${s.mfa_required_for_full_sudo ? "on" : "off"}, gateway ${s.mfa_required_for_gateway ? "on" : "off"}, rotation ${s.mfa_required_for_secret_rotation ? "on" : "off"}</dd>
       <dt class="col-sm-4">LDAP / OIDC</dt><dd class="col-sm-8">LDAP ${s.ldap_enabled ? "enabled" : "disabled"}, OIDC ${s.oidc_enabled ? "enabled" : "disabled"}</dd>

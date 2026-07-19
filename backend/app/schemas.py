@@ -749,6 +749,9 @@ class SettingsOut(BaseModel):
     medium_risk_score: int
     auth_providers: str
     default_auth_provider: str
+    local_auth_mode: str
+    os_pam_service: str
+    os_auto_provision: bool
     mfa_enabled: bool
     mfa_issuer: str
     mfa_required_for_admin: bool

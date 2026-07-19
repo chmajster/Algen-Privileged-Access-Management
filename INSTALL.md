@@ -84,7 +84,7 @@ Instalator przeprowadzi przez:
 - wybor katalogu instalacji,
 - opcjonalne utworzenie uslugi systemd,
 - opcjonalne utworzenie skrotu `.desktop`,
-- utworzenie konta admina aplikacji,
+- przypisanie roli admin istniejacemu kontu systemu Linux,
 - podsumowanie,
 - instalacje i walidacje.
 
@@ -99,16 +99,16 @@ Instalacja bez pytan:
 ./install.sh --silent --yes
 ```
 
-Instalacja z jawnym kontem admina:
+Instalacja z jawnym kontem Linux, ktore otrzyma role admina:
 
 ```bash
-./install.sh --silent --yes --admin-user admin --admin-email admin@example.local --admin-password 'zmien-to-haslo'
+./install.sh --silent --yes --admin-user "$(id -un)" --admin-email "$(id -un)@localhost.localdomain"
 ```
 
-Instalacja z wygenerowanym haslem admina:
+Tryb zgodnosci wstecznej z haslem w bazie aplikacji:
 
 ```bash
-./install.sh --silent --yes --generate-admin-password
+PAM_LOCAL_AUTH_MODE=database ./install.sh --silent --yes --generate-admin-password
 ```
 
 Instalacja systemowa z usluga:
@@ -213,7 +213,8 @@ Instalator ustawia `ALGEN_PAM_HOST=0.0.0.0`, wiec aplikacja nasluchuje na
 wszystkich interfejsach sieciowych. Dostep z innych komputerow wymaga zezwolenia
 na wybrany port TCP w firewallu hosta i ewentualnym firewallu sieciowym.
 
-Domyslne konta demo:
+Domyslne konta demo ponizej dzialaja tylko w jawnym trybie
+`PAM_LOCAL_AUTH_MODE=database`:
 
 ```text
 admin / admin123
@@ -221,15 +222,18 @@ approver / approver123
 user / user123
 ```
 
-Instalator tworzy lub aktualizuje lokalne konto admina przez:
+W domyslnym trybie `os` instalator wymaga istniejacego konta Linux i przypisuje
+mu role administratora w bazie aplikacji. Nie tworzy konta systemowego i nie
+zmienia jego hasla. Rekord roli aplikacyjnej mozna odtworzyc przez:
 
 ```bash
 cd <install-dir>/backend
-./.venv/bin/python -m app.bootstrap_admin --username admin --email admin@example.local --password 'nowe-haslo' --update-password
+./.venv/bin/python -m app.bootstrap_admin --username "$(id -un)" --email "$(id -un)@localhost.localdomain" --password "$(openssl rand -hex 24)"
 ```
 
-Przy ponownym uruchomieniu instalatora haslo istniejacego admina nie jest
-resetowane, chyba ze podasz `--admin-password` albo `--generate-admin-password`.
+Haslem logowania pozostaje haslo konta systemu operacyjnego. Argumenty
+`--admin-password` i `--generate-admin-password` maja znaczenie tylko w trybie
+zgodnosci `PAM_LOCAL_AUTH_MODE=database`.
 
 ## systemd
 
@@ -312,10 +316,11 @@ aktualizacji, nawet gdy ponowne uruchomienie instalatora nie zawiera opcji
 ktoregokolwiek warunku konczy aktualizacje bledem i wskazuje log instalatora oraz
 journal systemd.
 
-Aktualizacja nie zmienia hasla admina, o ile nie podasz jawnie nowego hasla:
+Aktualizacja nie zmienia hasla konta systemu Linux. W trybie zgodnosci database
+haslo aplikacyjne mozna zmienic jawnie:
 
 ```bash
-./install.sh --update --user --yes --admin-password 'nowe-haslo'
+PAM_LOCAL_AUTH_MODE=database ./install.sh --update --user --yes --admin-password 'nowe-haslo'
 ```
 
 ## Deinstalacja
@@ -412,9 +417,9 @@ file oraz zatrzymanie i usuniecie uslugi podczas deinstalacji.
 --no-service          nie tworz uslugi systemd
 --desktop             utworz skrot aplikacji
 --no-desktop          nie tworz skrotu aplikacji
---admin-user NAME     lokalny administrator aplikacji
+--admin-user NAME     istniejace konto Linux z rola administratora aplikacji
 --admin-email EMAIL   email lokalnego administratora
---admin-password PASS haslo lokalnego administratora
+--admin-password PASS haslo tylko dla trybu zgodnosci database
 --generate-admin-password
                      generuje losowe haslo administratora
 --branch NAME         pobierz wskazany branch repozytorium

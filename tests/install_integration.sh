@@ -16,6 +16,7 @@ MOCK_SYSTEMD_STATE_DIR="$TEST_ROOT/systemd-state"
 CONFIG_FILE="$TEST_HOME/.config/algen-pam/.env"
 SERVICE_FILE="$TEST_HOME/.config/systemd/user/algen-pam.service"
 PID_FILE="$MOCK_SYSTEMD_STATE_DIR/algen-pam.pid"
+OS_TEST_USER="$(id -un)"
 
 cleanup() {
   if [[ -x "$MOCK_BIN/systemctl" ]]; then
@@ -38,16 +39,16 @@ INSTALL_ARGS=(
   --silent --yes --user --service
   --install-dir "$INSTALL_DIR"
   --repo "$ROOT_DIR"
-  --admin-user integration-admin
-  --admin-email integration@example.local
+  --admin-user "$OS_TEST_USER"
+  --admin-email "$OS_TEST_USER@localhost.localdomain"
   --admin-password integration-pass
 )
 UPDATE_ARGS=(
   --silent --yes --user
   --install-dir "$INSTALL_DIR"
   --repo "$ROOT_DIR"
-  --admin-user integration-admin
-  --admin-email integration@example.local
+  --admin-user "$OS_TEST_USER"
+  --admin-email "$OS_TEST_USER@localhost.localdomain"
   --admin-password integration-pass
 )
 

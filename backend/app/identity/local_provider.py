@@ -1,5 +1,9 @@
-import pwd
 import secrets
+
+try:
+    import pwd
+except ImportError:  # pragma: no cover - Linux-only production provider
+    pwd = None
 
 from sqlalchemy.orm import Session as DBSession
 
@@ -30,6 +34,8 @@ def authenticate_os_account(username: str, password: str) -> bool:
 
 
 def _os_account(username: str):
+    if pwd is None:
+        raise LocalAuthenticationBackendError("Operating-system account database is unavailable")
     try:
         return pwd.getpwnam(username)
     except KeyError:
