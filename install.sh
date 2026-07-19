@@ -478,10 +478,16 @@ interactive_install_prompts() {
   if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then prompt_yes_no "Utworzyć skrót desktopowy?" no && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(prompt_value "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(prompt_value "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
+  local auth_default=1
+  [[ "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]] && auth_default=2
   printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
-  choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
-  choice="${choice:-1}"
+  choice="$(read_from_tty "Tryb uwierzytelniania [$auth_default]: ")" || die "Operacja anulowana."
+  choice="${choice:-$auth_default}"
   case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
+  if [[ "$LOCAL_AUTH_MODE" == os && "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]]; then
+    warn "Linux PAM nie może weryfikować kont systemowych z usługi algen-pam. Używam trybu bazy danych."
+    LOCAL_AUTH_MODE=database
+  fi
   [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$(default_admin_username)}")" || die "Operacja anulowana."
   [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(prompt_value "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
   if [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
@@ -495,10 +501,11 @@ interactive_install_prompts() {
   fi
 }
 confirm_summary() {
-  local ref_description="$BRANCH" mode_label="" scope_label="" service_label="nie" desktop_label="nie" backup_label="nie" preserve_data="tak" preserve_config="tak"
+  local ref_description="$BRANCH" mode_label="" scope_label="" auth_label="Linux PAM" service_label="nie" desktop_label="nie" backup_label="nie" preserve_data="tak" preserve_config="tak"
   [[ -z "$TAG" ]] || ref_description="$TAG"
   case "$MODE" in install) mode_label="Nowa instalacja"; backup_label="nie";; update) mode_label="Aktualizacja"; backup_label="tak";; reinstall) mode_label="Reinstalacja"; backup_label="tak";; backup) mode_label="Kopia bezpieczeństwa"; backup_label="tak";; remove-app) mode_label="Usunięcie aplikacji";; uninstall) mode_label="Pełna deinstalacja"; preserve_data=$([[ "$KEEP_DATA" -eq 1 ]] && printf tak || printf nie); preserve_config=$([[ "$KEEP_CONFIG" -eq 1 ]] && printf tak || printf nie);; esac
   [[ "$SCOPE" == system ]] && scope_label="Instalacja systemowa" || scope_label="Instalacja użytkownika"
+  [[ "$LOCAL_AUTH_MODE" == database ]] && auth_label="baza danych aplikacji"
   [[ "$SERVICE_CHOICE" -eq 1 ]] && service_label="tak"
   [[ "$DESKTOP_CHOICE" -eq 1 ]] && desktop_label="tak"
   cat >&2 <<EOF
@@ -516,6 +523,7 @@ Podsumowanie operacji
   Gałąź/tag:               $ref_description
   Port HTTP:               $APP_PORT
   Port SSH Gateway:        $GATEWAY_PORT
+  Uwierzytelnianie:        $auth_label
   Usługa systemd:          $service_label
   Skrót desktopowy:        $desktop_label
   Kopia bezpieczeństwa:    $backup_label
