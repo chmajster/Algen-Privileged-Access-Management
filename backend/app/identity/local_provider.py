@@ -27,7 +27,7 @@ def authenticate_os_account(username: str, password: str) -> bool:
         raise LocalAuthenticationBackendError("Linux PAM library is unavailable") from exc
 
     try:
-        authenticator = pam.authenticate()
+        authenticator = pam.pam()
         return bool(authenticator.authenticate(username, password, service=settings.pam_os_pam_service))
     except Exception as exc:
         raise LocalAuthenticationBackendError("Linux PAM authentication failed to initialize") from exc
@@ -87,6 +87,8 @@ def authenticate_local(db: DBSession, username: str, password: str) -> tuple[Use
             return None, []
         user = _provision_os_user(db, username, account)
     else:
+        if user.auth_provider != "local":
+            return None, []
         user.auth_provider = "local"
         user.external_id = f"uid:{account.pw_uid}"
         user.display_name = user.display_name or (account.pw_gecos or username).split(",", 1)[0]

@@ -1022,6 +1022,7 @@ validate_installation() {
   fi
   [[ -x "$BIN_PATH" ]] || abort "Launcher was not created at $BIN_PATH."
   "$BIN_PATH" --version >/dev/null || log "Version check is not supported."
+  validate_local_auth_backend
   if service_should_be_running; then
     service_exists || abort "The systemd service file was not created at $SERVICE_FILE."
     service_is_enabled || abort "Application service is not enabled after installation/update."
@@ -1035,6 +1036,21 @@ validate_installation() {
   else
     validate_temporary_server
   fi
+}
+
+validate_local_auth_backend() {
+  [[ "$LOCAL_AUTH_MODE" == "os" ]] || return 0
+  "$INSTALL_DIR/backend/.venv/bin/python" - "$ADMIN_USER" <<'PY' \
+    || abort "Linux PAM backend validation failed. Check that libpam is installed and the selected OS account exists."
+import pwd
+import sys
+
+import pam
+
+pwd.getpwnam(sys.argv[1])
+pam.pam()
+PY
+  log "Linux PAM backend and operating-system account $ADMIN_USER validated."
 }
 
 wait_for_health() {
