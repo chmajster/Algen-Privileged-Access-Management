@@ -874,7 +874,7 @@ rollback_release() {
 }
 bootstrap_admin() {
   [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0
-  local -a update_arg=(); [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 1 && "$MODE" != install ]] && update_arg=(--update-password)
+  local -a update_arg=(); [[ ( "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ) && "$MODE" != install ]] && update_arg=(--update-password)
   if [[ "$SCOPE" == system && "$(id -u)" -eq 0 && "$TARGET_USER" != root ]]; then
     (cd "$INSTALL_DIR/backend" && runuser -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}") || return 1
   elif [[ "$SCOPE" == system && "$(id -u)" -ne 0 && "$TARGET_USER" != "$(id -un)" ]]; then
@@ -919,10 +919,11 @@ full_uninstall() {
 
 # ---- main operation flow ---------------------------------------------------
 prepare_admin_defaults() {
-  if [[ "$LOCAL_AUTH_MODE" == os && "$ADMIN_USER_EXPLICIT" -eq 0 && "$ADMIN_USER" == algen-pam ]]; then
-    ADMIN_USER="$(default_admin_username)"
-    if [[ "$ADMIN_EMAIL_EXPLICIT" -eq 0 ]]; then ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"; fi
-    warn "Konto usługi algen-pam nie może logować się przez PAM. Administratorem będzie konto systemowe $ADMIN_USER."
+  if [[ "$LOCAL_AUTH_MODE" == os && "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]]; then
+    LOCAL_AUTH_MODE=database
+    [[ -n "$ADMIN_USER" ]] || ADMIN_USER=algen-pam
+    [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 1 ]] || ADMIN_PASSWORD_GENERATED=1
+    warn "Usługa algen-pam nie może bezpiecznie weryfikować haseł pam_unix. Przełączono uwierzytelnianie na bazę danych."
   fi
   [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(default_admin_username)"
   [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"

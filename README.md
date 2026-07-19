@@ -514,6 +514,12 @@ ktorym sam dziala. Uwierzytelnianie wielu lokalnych kont wymaga odpowiednio
 uprzywilejowanego stosu PAM, na przyklad SSSD. Niedostepny backend PAM zwraca HTTP
 503 zamiast niekontrolowanego bledu 500.
 
+Dlatego instalacja systemowa uruchamiana bezposrednio jako root, ktora tworzy
+techniczne konto uslugi `algen-pam`, domyslnie korzysta z trybu `database` i
+generuje dzialajace haslo administratora. Linux PAM pozostaje dostepny, gdy
+proces uslugi dziala jako rzeczywiste konto uzytkownika lub korzysta z
+odpowiednio skonfigurowanego zewnetrznego stosu PAM.
+
 Stan backendu mozna sprawdzic bez logowania przez `GET /api/health`. Szczegoly
 bledu inicjalizacji sa zapisywane w journalu uslugi bez zapisywania hasla.
 

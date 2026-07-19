@@ -120,10 +120,12 @@ PAM_LOCAL_AUTH_MODE=database ./install.sh --install --generate-admin-password
 Bootstrap korzysta z `python -m app.bootstrap_admin`. W trybie `database` hasło
 jest generowane albo pobierane z argumentu, przekazywane tylko do bootstrapu,
 usuwane z `.env`, a zmienna powłoki jest czyszczona przez `unset`. Wygenerowane
-hasło jest pokazane raz. W domyślnym trybie Linux PAM instalator nie pokazuje
-hasła aplikacji: należy użyć istniejącego hasła wybranego konta systemowego.
-Przy uruchomieniu bez `sudo` jako root domyślnym administratorem PAM jest `root`,
-a nie techniczne konto usługi `algen-pam`.
+hasło jest pokazane raz. W trybie Linux PAM instalator nie pokazuje hasła
+aplikacji: należy użyć istniejącego hasła wybranego konta systemowego. Gdy
+systemowa usługa działa jako techniczne konto `algen-pam`, kreator domyślnie
+wybiera tryb `database`, ponieważ nieuprzywilejowana usługa nie może bezpiecznie
+weryfikować przez `pam_unix` haseł innych kont. Aktualizacja takiej wcześniejszej
+instalacji przełącza ją na `database` i pokazuje nowe hasło administratora.
 
 Domyślne `change-me` i `change-this-32-byte-key` z `.env.example` są zastępowane
 losowymi sekretami. Zapis `.env` jest atomowy i obsługuje spacje, `#` i znaki
