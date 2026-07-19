@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     pam_oidc_admin_role: str = "pam_admin"
     pam_oidc_approver_role: str = "pam_approver"
     pam_oidc_user_role: str = "pam_user"
+    pam_registration_require_https: bool = True
+    pam_registration_rate_limit_count: int = 10
+    pam_registration_rate_limit_window_minutes: int = 60
+    pam_registration_known_hosts_path: str = "/data/registration_known_hosts"
 
     model_config = SettingsConfigDict(env_file=Path(__file__).parents[2] / ".env", extra="ignore")
 

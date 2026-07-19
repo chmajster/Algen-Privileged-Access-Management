@@ -370,6 +370,15 @@ def test_revoke_imports_logs_before_access_removed(client):
         json={"server_id": 1, "reason": "revoke import", "requested_duration_minutes": 60, "requested_access_type": "ssh_only"},
     )
     grant = client.get("/api/access-grants/active", headers=user_headers).json()[0]
+    db = SessionLocal()
+    try:
+        direct_grant = db.get(AccessGrant, grant["id"])
+        direct_grant.direct_ssh_enabled = True
+        direct_grant.gateway_session_required = False
+        direct_grant.access_mode = "direct"
+        db.commit()
+    finally:
+        db.close()
     response = client.post(f"/api/access-grants/{grant['id']}/revoke", headers=approver_headers, json={"reason": "test"})
     assert response.status_code == 200
     db = SessionLocal()
@@ -634,6 +643,7 @@ def test_policy_rule_can_deny_matching_command(client):
 
 def test_alert_acknowledge_and_resolve_flow(client):
     headers = auth_headers(client, "user", "user123")
+    admin_headers = auth_headers(client)
     client.post(
         "/api/access-requests",
         headers=headers,
@@ -649,8 +659,8 @@ def test_alert_acknowledge_and_resolve_flow(client):
     finally:
         db.close()
     assert alert_id is not None
-    assert client.post(f"/api/alerts/{alert_id}/acknowledge", headers=headers).json()["status"] == "acknowledged"
-    resolved = client.post(f"/api/alerts/{alert_id}/resolve", headers=auth_headers(client))
+    assert client.post(f"/api/alerts/{alert_id}/acknowledge", headers=admin_headers).json()["status"] == "acknowledged"
+    resolved = client.post(f"/api/alerts/{alert_id}/resolve", headers=admin_headers)
     assert resolved.status_code == 200
     assert resolved.json()["status"] == "resolved"
 

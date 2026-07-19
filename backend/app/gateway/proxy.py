@@ -8,6 +8,8 @@ from .service import write_gateway_event
 
 def target_connection_settings(grant: AccessGrant) -> dict:
     server: Server = grant.server
+    if getattr(server, "registration_status", "approved") != "approved" or not server.enabled:
+        raise RuntimeError("Server is not approved for gateway access")
     key_path = server.gateway_private_key_path or server.ssh_private_key_path
     secret_id = server.gateway_secret_ref_id or server.ssh_auth_secret_id
     if secret_id:

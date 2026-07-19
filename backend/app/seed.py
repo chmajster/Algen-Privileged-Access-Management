@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.identity.sync import upsert_external_user
-from app.models import Alert, AuthEvent, MfaChallenge, Policy, PolicyRule, RiskEvent, Secret, SecretVersion, Server, ServerGroup, ServerGroupMember, ServerGroupUserMembership, StepUpSession, User, utcnow
+from app.models import Alert, AuthEvent, MfaChallenge, Policy, PolicyRule, RiskEvent, Secret, SecretVersion, Server, ServerGroup, ServerGroupMember, ServerGroupUserMembership, ServerTemplate, ServerTemplateAllowedGroup, ServerTemplateDefaultGroup, StepUpSession, User, utcnow
 from app.policy.default_rules import seed_default_policy_rules
 from app.security import hash_password
 
@@ -190,4 +190,23 @@ def seed_demo_data(db: Session) -> None:
         subject = db.query(User).filter(User.username == username).first()
         if subject and not db.query(ServerGroupUserMembership).filter_by(server_group_id=demo_groups["Development"].id, user_id=subject.id).first():
             db.add(ServerGroupUserMembership(server_group_id=demo_groups["Development"].id, user_id=subject.id, group_role="operator" if subject.role == "operator" else "user", created_by_id=admin.id if admin else None))
+    for name, environment, group_name, approval, criticality, direct in (
+        ("linux-development", "dev", "Development", False, "low", True),
+        ("linux-production", "prod", "Production", True, "critical", False),
+    ):
+        template = db.query(ServerTemplate).filter(ServerTemplate.name == name).first()
+        if not template:
+            template = ServerTemplate(
+                name=name, description=f"Secure Linux {environment} registration", environment=environment,
+                criticality=criticality, direct_access_enabled=direct, gateway_enabled=True,
+                require_mfa=approval, require_approval=approval, require_session_recording=approval,
+                registration_requires_approval=approval, host_key_policy="trust_on_first_use" if environment == "dev" else "strict",
+                created_by_id=admin.id if admin else None, updated_by_id=admin.id if admin else None,
+            )
+            db.add(template); db.flush()
+        group = demo_groups[group_name]
+        if not db.query(ServerTemplateAllowedGroup).filter_by(template_id=template.id, server_group_id=group.id).first():
+            db.add(ServerTemplateAllowedGroup(template_id=template.id, server_group_id=group.id))
+        if not db.query(ServerTemplateDefaultGroup).filter_by(template_id=template.id, server_group_id=group.id).first():
+            db.add(ServerTemplateDefaultGroup(template_id=template.id, server_group_id=group.id))
     db.commit()

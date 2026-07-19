@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import SessionLocal, init_db
 from app.identity.local_provider import LocalAuthenticationBackendError, validate_os_auth_backend
 from app.models import User
-from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, servers, sessions, users
+from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
 from app.seed import seed_demo_data
 
@@ -57,6 +57,9 @@ app.include_router(identity.router)
 app.include_router(users.router)
 app.include_router(access_groups.router)
 app.include_router(servers.router)
+app.include_router(server_templates.router)
+app.include_router(server_registrations.register_router)
+app.include_router(server_registrations.approval_router)
 app.include_router(access_requests.router)
 app.include_router(access_grants.router)
 app.include_router(policies.router)

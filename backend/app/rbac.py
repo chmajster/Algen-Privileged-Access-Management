@@ -28,7 +28,9 @@ from app.models import (
 # are accepted through PERMISSION_ALIASES without creating duplicate entries.
 PERMISSIONS = {
     "servers.view", "servers.create", "servers.update", "servers.delete", "servers.test_connection",
-    "servers.connect", "servers.direct_ssh", "servers.gateway_ssh",
+    "servers.connect", "servers.direct_ssh", "servers.gateway_ssh", "servers.register_via_api",
+    "servers.use_template", "servers.assign_to_group", "servers.provide_credentials",
+    "servers.test_connection", "servers.approve_registration",
     "access.request", "access.approve", "access.reject",
     "access.revoke", "access.extend", "access.ssh_only", "access.limited_sudo", "access.full_sudo",
     "sessions.view_own", "sessions.view_group", "sessions.terminate", "recordings.view_own", "recordings.view_group",
@@ -39,7 +41,6 @@ PERMISSIONS = {
 
 PERMISSION_ALIASES = {
     "servers.edit": "servers.update",
-    "servers.assign_to_group": "group.servers.manage",
     "access.connect": "servers.connect",
     "access.connect_direct": "servers.direct_ssh",
     "access.connect_gateway": "servers.gateway_ssh",
@@ -55,6 +56,7 @@ ROLE_PERMISSIONS = {
     "group_admin": set(PERMISSIONS),
     "operator": {
         "servers.view", "servers.update", "servers.test_connection", "servers.connect", "servers.gateway_ssh",
+        "servers.approve_registration",
         "access.approve", "access.reject", "access.revoke", "access.extend", "sessions.view_group", "sessions.terminate",
         "recordings.view_group", "commands.view_group", "audit.view_group", "group.members.view", "alerts.view",
     },

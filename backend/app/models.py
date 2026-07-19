@@ -169,6 +169,15 @@ class Server(Base, TimestampMixin):
     require_session_recording: Mapped[bool] = mapped_column(Boolean, default=False)
     require_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     require_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
+    server_template_id: Mapped[int | None] = mapped_column(ForeignKey("server_templates.id"), nullable=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    registration_source: Mapped[str] = mapped_column(String(32), default="manual", index=True)
+    registration_status: Mapped[str] = mapped_column(String(32), default="approved", index=True)
+    registration_rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    registration_connection_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    host_key_policy: Mapped[str] = mapped_column(String(32), default="strict")
+    expected_host_key_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class AccessRequest(Base, TimestampMixin):
@@ -609,6 +618,74 @@ class ServerGroup(Base, TimestampMixin):
     min_reason_length: Mapped[int] = mapped_column(Integer, default=10)
     revoke_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
     terminate_sessions_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ServerTemplate(Base, TimestampMixin):
+    __tablename__ = "server_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    environment: Mapped[str] = mapped_column(String(64), default="dev", index=True)
+    default_ssh_port: Mapped[int] = mapped_column(Integer, default=22)
+    criticality: Mapped[str] = mapped_column(String(32), default="low")
+    gateway_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    direct_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_session_recording: Mapped[bool] = mapped_column(Boolean, default=False)
+    command_logging_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    allowed_auth_types: Mapped[str] = mapped_column(String(128), default="password")
+    connection_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
+    registration_requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    host_key_policy: Mapped[str] = mapped_column(String(32), default="strict")
+    expected_host_key_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    allow_special_addresses: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_cidrs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+
+
+class ServerTemplateDefaultGroup(Base):
+    __tablename__ = "server_template_default_groups"
+    __table_args__ = (UniqueConstraint("template_id", "server_group_id", name="uq_server_template_default_group"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("server_templates.id"), index=True)
+    server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
+
+
+class ServerTemplateAllowedGroup(Base):
+    __tablename__ = "server_template_allowed_groups"
+    __table_args__ = (UniqueConstraint("template_id", "server_group_id", name="uq_server_template_allowed_group"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("server_templates.id"), index=True)
+    server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
+
+
+class ServerRegistrationIdentity(Base):
+    __tablename__ = "server_registration_identities"
+    __table_args__ = (
+        UniqueConstraint("address", "ssh_port", name="uq_server_registration_address_port"),
+        UniqueConstraint("hostname", name="uq_server_registration_hostname"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), unique=True, index=True)
+    address: Mapped[str] = mapped_column(String(255))
+    ssh_port: Mapped[int] = mapped_column(Integer)
+    hostname: Mapped[str] = mapped_column(String(255))
+
+
+class ServerRegistrationIdempotency(Base):
+    __tablename__ = "server_registration_idempotency"
+    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_server_registration_idempotency"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), index=True)
+    response_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class ServerGroupMember(Base):

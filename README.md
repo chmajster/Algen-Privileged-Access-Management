@@ -614,6 +614,12 @@ Backend filtruje serwery, requesty, granty, sesje, komendy, alerty, sekrety, aud
 
 Panel `Access Management` umożliwia zarządzanie grupami serwerów, członkami, rolami, indywidualnymi wyjątkami, polityką czasu/MFA/gateway/nagrywania oraz macierzą uprawnień. Formularze serwerów obsługują wiele grup i referencje do Secrets Vault; nigdy nie przyjmują materiału prywatnego klucza.
 
+## Rejestracja serwerów przez API
+
+`POST /api/servers/register` przyjmuje dane hosta, konto administracyjne i dokładnie jeden identyfikator wzorca (`template_id` albo `template_name`). Hasło jest używane opcjonalnie do bezpiecznego testu SSH, a następnie trafia wyłącznie do lokalnego, szyfrowanego Secrets Vault jako `ssh_password`. Endpoint obsługuje `Idempotency-Key`, limity per użytkownik, ochronę przed duplikatami i polityki host key `strict`, `trust_on_first_use` oraz `manual_fingerprint`.
+
+Wymagane uprawnienia grupowe to `servers.register_via_api`, `servers.use_template` i `servers.provide_credentials`; test SSH wymaga dodatkowo `servers.test_connection`, a grupy spoza domyślnego zestawu wzorca wymagają `servers.assign_to_group`. Rejestracje wymagające akceptacji są nieaktywne do czasu wywołania `/api/server-registrations/{server_id}/approve` przez administratora lub operatora z `servers.approve_registration`.
+
 Pełny opis modelu, algorytmu uprawnień, migracji, scenariuszy i endpointów znajduje się w [dokumentacji RBAC](docs/RBAC.md).
 
 ## Security Notes

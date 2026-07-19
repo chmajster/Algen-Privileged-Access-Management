@@ -90,10 +90,10 @@ class MockExecutor(Executor):
 
 
 class SSHExecutor(Executor):
-    def _resolve_key_path(self, server: Server) -> tuple[str, str | None]:
+    def _resolve_auth(self, server: Server) -> tuple[str | None, str | None, str | None]:
         secret_id = server.ssh_auth_secret_id or server.secret_ref_id
         if not secret_id:
-            return server.ssh_private_key_path or settings.pam_executor_ssh_key_path, None
+            return server.ssh_private_key_path or settings.pam_executor_ssh_key_path, None, None
         db = SessionLocal()
         try:
             secret = db.get(Secret, secret_id)
@@ -103,18 +103,23 @@ class SSHExecutor(Executor):
             db.commit()
         finally:
             db.close()
+        if secret.secret_type == "ssh_password":
+            return None, None, value
         handle = tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8")
         handle.write(value)
         handle.close()
         os.chmod(handle.name, 0o600)
-        return handle.name, handle.name
+        return handle.name, handle.name, None
 
     def _run(self, server: Server, command: str) -> str:
         import paramiko
 
-        key_path, temp_key_path = self._resolve_key_path(server)
+        if getattr(server, "registration_status", "approved") != "approved" or not server.enabled:
+            raise RuntimeError("Server is not approved for execution")
+
+        key_path, temp_key_path, password = self._resolve_auth(server)
         admin_user = server.ssh_admin_user or "root"
-        key = paramiko.RSAKey.from_private_key_file(key_path)
+        key = paramiko.RSAKey.from_private_key_file(key_path) if key_path else None
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -123,6 +128,9 @@ class SSHExecutor(Executor):
                 port=server.ssh_port,
                 username=admin_user,
                 pkey=key,
+                password=password,
+                allow_agent=False,
+                look_for_keys=False,
                 timeout=10,
             )
             stdin, stdout, stderr = client.exec_command(command)
@@ -138,6 +146,7 @@ class SSHExecutor(Executor):
                     os.remove(temp_key_path)
                 except OSError:
                     pass
+            password = None
 
     def test_connection(self, server: Server) -> dict:
         output = self._run(server, "id && hostname")

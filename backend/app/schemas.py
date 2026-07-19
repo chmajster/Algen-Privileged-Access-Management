@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -222,6 +222,131 @@ class ServerOut(ServerBase):
     # serialized. New configuration uses Secrets Vault references.
     ssh_private_key_path: str | None = Field(default=None, exclude=True)
     gateway_private_key_path: str | None = Field(default=None, exclude=True)
+    server_template_id: int | None = None
+    created_by_id: int | None = None
+    registered_at: datetime | None = None
+    registration_source: str = "manual"
+    registration_status: str = "approved"
+    registration_rejection_reason: str | None = None
+    registration_connection_status: str | None = None
+    host_key_policy: str = "strict"
+    expected_host_key_fingerprint: str | None = None
+
+
+class ServerTemplateBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    enabled: bool = True
+    environment: str = Field(default="dev", min_length=1, max_length=64)
+    default_ssh_port: int = Field(default=22, ge=1, le=65535)
+    criticality: Literal["low", "medium", "high", "critical"] = "low"
+    gateway_enabled: bool = True
+    direct_access_enabled: bool = False
+    require_mfa: bool = False
+    require_approval: bool = False
+    require_session_recording: bool = False
+    command_logging_enabled: bool = True
+    allowed_auth_types: str = "password"
+    connection_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    registration_requires_approval: bool = False
+    host_key_policy: Literal["strict", "trust_on_first_use", "manual_fingerprint"] = "strict"
+    expected_host_key_fingerprint: str | None = Field(default=None, max_length=128)
+    allow_special_addresses: bool = False
+    allowed_cidrs: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_security(self):
+        if "password" not in {value.strip() for value in self.allowed_auth_types.split(",")}:
+            raise ValueError("allowed_auth_types must include password")
+        if self.host_key_policy == "manual_fingerprint" and not self.expected_host_key_fingerprint:
+            raise ValueError("manual host key policy requires expected_host_key_fingerprint")
+        return self
+
+
+class ServerTemplateCreate(ServerTemplateBase):
+    default_group_ids: list[int] = Field(default_factory=list)
+    allowed_group_ids: list[int] = Field(default_factory=list)
+
+
+class ServerTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    enabled: bool | None = None
+    environment: str | None = Field(default=None, min_length=1, max_length=64)
+    default_ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    criticality: Literal["low", "medium", "high", "critical"] | None = None
+    gateway_enabled: bool | None = None
+    direct_access_enabled: bool | None = None
+    require_mfa: bool | None = None
+    require_approval: bool | None = None
+    require_session_recording: bool | None = None
+    command_logging_enabled: bool | None = None
+    allowed_auth_types: str | None = None
+    connection_timeout_seconds: int | None = Field(default=None, ge=1, le=60)
+    registration_requires_approval: bool | None = None
+    host_key_policy: Literal["strict", "trust_on_first_use", "manual_fingerprint"] | None = None
+    expected_host_key_fingerprint: str | None = Field(default=None, max_length=128)
+    allow_special_addresses: bool | None = None
+    allowed_cidrs: str | None = Field(default=None, max_length=4000)
+    default_group_ids: list[int] | None = None
+    allowed_group_ids: list[int] | None = None
+
+
+class ServerTemplateOut(ServerTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    default_group_ids: list[int] = Field(default_factory=list)
+    allowed_group_ids: list[int] = Field(default_factory=list)
+
+
+class ServerRegistrationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    address: str = Field(min_length=1, max_length=253)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+    password: SecretStr = Field(min_length=1, max_length=4096)
+    hostname: str = Field(min_length=1, max_length=253)
+    description: str | None = Field(default=None, max_length=2000)
+    template_id: int | None = None
+    template_name: str | None = Field(default=None, min_length=1, max_length=128)
+    group_ids: list[int] = Field(default_factory=list, max_length=100)
+    test_connection: bool = True
+    host_key_policy: Literal["strict", "trust_on_first_use", "manual_fingerprint"] | None = None
+    expected_host_key_fingerprint: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def exactly_one_template(self):
+        if (self.template_id is None) == (self.template_name is None):
+            raise ValueError("provide exactly one of template_id or template_name")
+        self.address = ServerCreate.validate_host(self.address)
+        self.hostname = ServerCreate.validate_host(self.hostname)
+        return self
+
+
+class ServerRegistrationOut(BaseModel):
+    id: int
+    hostname: str
+    address: str
+    port: int
+    ssh_port: int
+    template_id: int
+    template: dict[str, Any]
+    group_ids: list[int]
+    groups: list[dict[str, Any]]
+    status: Literal["approved", "pending_approval", "rejected"]
+    enabled: bool
+    connection_status: str | None = None
+    connection_test: dict[str, str]
+    credential: dict[str, Any]
+    registered_at: datetime
+
+
+class ServerRegistrationDecisionIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class AccessRequestCreate(BaseModel):

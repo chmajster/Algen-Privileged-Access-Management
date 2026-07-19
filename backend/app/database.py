@@ -111,6 +111,15 @@ def _ensure_legacy_columns() -> None:
                 "require_session_recording": "BOOLEAN DEFAULT 0 NOT NULL",
                 "require_approval": "BOOLEAN DEFAULT 0 NOT NULL",
                 "require_mfa": "BOOLEAN DEFAULT 0 NOT NULL",
+                "server_template_id": "INTEGER",
+                "created_by_id": "INTEGER",
+                "registered_at": "DATETIME",
+                "registration_source": "VARCHAR(32) DEFAULT 'manual' NOT NULL",
+                "registration_status": "VARCHAR(32) DEFAULT 'approved' NOT NULL",
+                "registration_rejection_reason": "TEXT",
+                "registration_connection_status": "VARCHAR(32)",
+                "host_key_policy": "VARCHAR(32) DEFAULT 'strict' NOT NULL",
+                "expected_host_key_fingerprint": "VARCHAR(128)",
             },
         )
         add_missing(
