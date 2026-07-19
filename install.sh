@@ -281,6 +281,7 @@ determine_mode() {
     else MODE=install; fi
   fi
   case "$MODE" in
+    install) if marker_valid; then die "An installation marker already exists; use --update or --reinstall."; fi ;;
     update|backup|remove-app|uninstall) installation_present || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode '$MODE' requires a valid installation marker in $INSTALL_DIR."; } ;;
     reinstall) marker_valid || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode 'reinstall' requires a valid installation marker in $INSTALL_DIR."; } ;;
   esac
@@ -388,9 +389,7 @@ interactive_mode_selection() {
   marker_valid || return 0
   local choice="" result=0
   if ! have_tty; then
-    MODE=update; MODE_SELECTED_INTERACTIVELY=1; AUTO_UPDATE_SELECTED=1
-    info "Brak terminala wejściowego. Rozpoczynam bezpieczną aktualizację z zachowaniem konfiguracji i danych."
-    return 0
+    die "Brak terminala wejściowego. Podaj jawny tryb oraz --yes albo użyj --silent --yes."
   fi
   print_existing_installation_menu
   while true; do
