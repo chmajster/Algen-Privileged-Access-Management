@@ -73,10 +73,10 @@ emit() {
   [[ "$level" != DEBUG || "$VERBOSE" -eq 1 ]] || return 0
   local line
   line="[$(timestamp)] [$level] $*"
-  local color=""
+  local color="" reset="$COLOR_RESET"
   case "$level" in INFO) color="$COLOR_BLUE";; OK) color="$COLOR_GREEN";; WARN) color="$COLOR_YELLOW";; ERROR) color="$COLOR_RED";; esac
-  [[ "$SILENT" -eq 0 ]] || color=""
-  printf '%b%s%b\n' "$color" "$line" "$COLOR_RESET" >&2
+  [[ "$SILENT" -eq 0 ]] || { color=""; reset=""; }
+  printf '%b%s%b\n' "$color" "$line" "$reset" >&2
   if [[ -n "$LOG_FILE" && -f "$LOG_FILE" && "$DRY_RUN" -eq 0 ]]; then
     printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null || true
   fi
@@ -227,7 +227,7 @@ parse_args() {
   done
 }
 valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
-validate_path_text() { [[ "$1" != *$'\n'* && "$1" != *$'\r'* && "$1" != *$'\0'* ]] || die "Path contains a forbidden control character."; }
+validate_path_text() { [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]] || die "Path contains a forbidden control character."; }
 validate_arguments() {
   [[ "$(uname -s)" == Linux || "$DRY_RUN" -eq 1 ]] || die "This installer supports Linux only."
   valid_port "$APP_PORT" || die "--port must be an integer from 1 to 65535."
@@ -300,10 +300,11 @@ determine_mode() {
     else MODE=install; fi
   fi
   case "$MODE" in
-    install) marker_valid && die "An installation marker already exists; use --update or --reinstall." ;;
+    install) if marker_valid; then die "An installation marker already exists; use --update or --reinstall."; fi ;;
     update|backup|remove-app|uninstall) installation_present || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode '$MODE' requires a valid installation marker in $INSTALL_DIR."; } ;;
     reinstall) marker_valid || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode 'reinstall' requires a valid installation marker in $INSTALL_DIR."; } ;;
   esac
+  return 0
 }
 require_privileges() {
   [[ "$DRY_RUN" -eq 0 ]] || return 0
@@ -431,9 +432,7 @@ interactive_mode_selection() {
   marker_valid || return 0
   local choice="" result=0
   if ! have_tty; then
-    MODE=update; MODE_SELECTED_INTERACTIVELY=1; AUTO_UPDATE_SELECTED=1
-    info "Brak terminala wejściowego. Rozpoczynam bezpieczną aktualizację z zachowaniem konfiguracji i danych."
-    return 0
+    die "Brak terminala wejściowego. Podaj jawny tryb oraz --yes albo użyj --silent --yes."
   fi
   print_existing_installation_menu
   while true; do
@@ -561,6 +560,7 @@ EOF
 }
 confirm_full_uninstall() {
   [[ "$MODE" == uninstall ]] || return 0
+  [[ "$DRY_RUN" -eq 0 ]] || return 0
   [[ "$YES" -eq 1 && ( "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]] && return 0
   cat >&2 <<EOF
 
