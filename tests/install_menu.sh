@@ -66,6 +66,14 @@ LOCAL_AUTH_MODE=database
   [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
 ) 2>/dev/null
 
+# Interactive execution uses a visible 3-2-1 countdown without another prompt.
+sleep() { :; }
+SILENT=0; YES=0; DRY_RUN=0
+countdown_output="$(start_countdown 2>&1)"
+[[ "$countdown_output" == $'Start za 3...\nStart za 2...\nStart za 1...\nUruchamiam.' ]]
+SILENT=1
+[[ -z "$(start_countdown 2>&1)" ]]
+
 # Without an explicit mode the installer selects update only for an existing
 # installation; otherwise it selects a fresh install.
 installation_present() { return 0; }

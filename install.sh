@@ -12,6 +12,7 @@ readonly DEFAULT_REPO="https://github.com/chmajster/Algen-Privileged-Access-Mana
 readonly DEFAULT_BRANCH="main"
 readonly REQUIRED_PYTHON_MINOR=12
 readonly EXISTING_ACTION_TIMEOUT=5
+readonly START_COUNTDOWN_SECONDS=3
 
 MODE=""                       # install|update|reinstall|backup|remove-app|uninstall
 MODE_EXPLICIT=0
@@ -500,7 +501,7 @@ interactive_install_prompts() {
     fi
   fi
 }
-confirm_summary() {
+print_summary() {
   local ref_description="$BRANCH" mode_label="" scope_label="" auth_label="Linux PAM" service_label="nie" desktop_label="nie" backup_label="nie" preserve_data="tak" preserve_config="tak"
   [[ -z "$TAG" ]] || ref_description="$TAG"
   case "$MODE" in install) mode_label="Nowa instalacja"; backup_label="nie";; update) mode_label="Aktualizacja"; backup_label="tak";; reinstall) mode_label="Reinstalacja"; backup_label="tak";; backup) mode_label="Kopia bezpieczeństwa"; backup_label="tak";; remove-app) mode_label="Usunięcie aplikacji";; uninstall) mode_label="Pełna deinstalacja"; preserve_data=$([[ "$KEEP_DATA" -eq 1 ]] && printf tak || printf nie); preserve_config=$([[ "$KEEP_CONFIG" -eq 1 ]] && printf tak || printf nie);; esac
@@ -530,13 +531,6 @@ Podsumowanie operacji
   Zachowanie danych:       $preserve_data
   Zachowanie konfiguracji: $preserve_config
 EOF
-  [[ "$DRY_RUN" -eq 1 || "$AUTO_UPDATE_SELECTED" -eq 1 ]] && return 0
-  [[ "$SILENT" -eq 1 && ( "$MODE" == install || "$MODE" == update || "$AUTO_REPAIR_SELECTED" -eq 1 ) ]] && return 0
-  if [[ "$YES" -eq 1 && ( "$MODE" != uninstall || "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]]; then return 0; fi
-  [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes for this operation."
-  have_tty || die "No interactive terminal available for confirmation."
-  local answer; answer="$(read_from_tty "Kontynuować? [y/N]: ")" || die "Operacja anulowana."
-  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Operacja anulowana."
 }
 confirm_full_uninstall() {
   [[ "$MODE" == uninstall ]] || return 0
@@ -563,6 +557,15 @@ EOF
   have_tty || die "Pełna deinstalacja wymaga wpisania USUN w terminalu albo jawnych opcji --uninstall --yes."
   local answer; answer="$(read_from_tty "Wpisz USUN, aby kontynuować: ")" || die "Operacja anulowana."
   [[ "$answer" == USUN ]] || die "Pełna deinstalacja anulowana — nie wpisano USUN."
+}
+start_countdown() {
+  [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 ]] || return 0
+  local seconds
+  for ((seconds=START_COUNTDOWN_SECONDS; seconds >= 1; seconds--)); do
+    printf 'Start za %s...\n' "$seconds" >&2
+    sleep 1
+  done
+  printf 'Uruchamiam.\n' >&2
 }
 
 # ---- configuration ---------------------------------------------------------
@@ -1086,8 +1089,9 @@ main() {
   require_privileges                        # 9. Uprawnienia
   prepare_admin_defaults                    # 10. Administrator
   prepare_admin_password
-  confirm_summary                           # 11. Podsumowanie
-  confirm_full_uninstall                    # 12. Potwierdzenie
+  print_summary                             # 11. Podsumowanie
+  confirm_full_uninstall                    # 12. Zabezpieczenie pełnej deinstalacji
+  start_countdown                           # 13. Krótkie odliczanie w trybie interaktywnym
   [[ "$DRY_RUN" -eq 0 ]] || { ok "Tryb dry-run zakończony; nie wprowadzono żadnych zmian."; return 0; }
   MUTATIONS_STARTED=1
   prepare_logging

@@ -61,6 +61,10 @@ ma zawsze pierwszeństwo i wyłącza menu. Kreator pierwszej instalacji używa t
 zwykłych komunikatów i pytań tekstowych w terminalu. Nie używa kolorów,
 `whiptail`, `dialog` ani sekwencji sterujących ANSI.
 
+Po podsumowaniu instalator nie pyta dodatkowo o kontynuację. W trybie
+interaktywnym wyświetla odliczanie `3`, `2`, `1` i rozpoczyna wybraną operację.
+Tryby `--silent`, `--yes` i `--dry-run` pomijają odliczanie.
+
 Domyślne wartości pozwalają przejść kreator klawiszem Enter: instalacja
 systemowa w `/opt/algen-pam`, usługa systemd włączona, skrót desktopowy
 wyłączony, porty `8080` i `2222`, uwierzytelnianie Linux PAM oraz automatycznie
