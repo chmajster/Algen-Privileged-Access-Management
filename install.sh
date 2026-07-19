@@ -382,6 +382,7 @@ read_from_tty_timeout() {
 map_existing_action() {
   case "${1:-}" in
     ""|1) MODE=update ;;
+    __timeout__) MODE=update; AUTO_UPDATE_SELECTED=1 ;;
     2) MODE=reinstall ;;
     3) MODE=backup ;;
     4) MODE=remove-app ;;
@@ -446,7 +447,7 @@ interactive_mode_selection() {
       fi
     else
       printf '\n' >/dev/tty
-      MODE=update; MODE_SELECTED_INTERACTIVELY=1; AUTO_UPDATE_SELECTED=1
+      map_existing_action __timeout__; MODE_SELECTED_INTERACTIVELY=1
       info "Nie wybrano operacji. Rozpoczynam bezpieczną aktualizację."
       info "Konfiguracja i dane zostaną zachowane."
       return 0
