@@ -56,6 +56,9 @@ echo "[integration] fresh installation"
 bash "$INSTALLER" "${INSTALL_ARGS[@]}"
 
 [[ -f "$INSTALL_DIR/.algen-pam-install" ]]
+[[ -d "$INSTALL_DIR/backend" ]]
+[[ -x "$INSTALL_DIR/backend/.venv/bin/uvicorn" ]]
+[[ ! -e "$INSTALL_DIR/release" ]]
 [[ ! -e "$INSTALL_DIR/.git" ]]
 [[ -x "$TEST_HOME/.local/bin/algen-pam" ]]
 [[ -f "$CONFIG_FILE" ]]

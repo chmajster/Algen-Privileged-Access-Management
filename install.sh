@@ -17,6 +17,7 @@ MODE=""                       # install|update|reinstall|backup|remove-app|unins
 MODE_EXPLICIT=0
 MODE_SELECTED_INTERACTIVELY=0
 AUTO_UPDATE_SELECTED=0
+AUTO_REPAIR_SELECTED=0
 SCOPE=""
 SCOPE_EXPLICIT=0
 SILENT=0
@@ -220,7 +221,7 @@ validate_arguments() {
   [[ "$REPO" != *$'\n'* && "$REPO" =~ ^(https://|ssh://|git@|file://|/|\./|\.\./) ]] || die "--repo must be an HTTPS/SSH Git URL or a local path."
   [[ "$LOCAL_AUTH_MODE" == os || "$LOCAL_AUTH_MODE" == database ]] || die "PAM_LOCAL_AUTH_MODE must be 'os' or 'database'."
   if [[ "$SILENT" -eq 1 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
-    [[ -z "$MODE" || "$MODE" == install || "$MODE" == update ]] \
+    [[ -z "$MODE" || "$MODE" == install || "$MODE" == update || "$AUTO_REPAIR_SELECTED" -eq 1 ]] \
       || die "Silent $MODE requires --yes. Without an explicit mode, --silent automatically installs or updates."
   fi
   [[ -z "$INSTALL_DIR" ]] || validate_path_text "$INSTALL_DIR"
@@ -280,7 +281,7 @@ detect_existing_scope() {
 determine_mode() {
   if [[ -z "$MODE" ]]; then
     if installation_present; then MODE=update
-    elif marker_valid; then MODE=reinstall
+    elif marker_valid; then MODE=reinstall; AUTO_REPAIR_SELECTED=1
     else MODE=install; fi
   fi
   case "$MODE" in
@@ -394,6 +395,13 @@ interactive_mode_selection() {
   if ! have_tty; then
     die "Brak terminala wejściowego. Podaj jawny tryb oraz --yes albo użyj --silent --yes."
   fi
+  if ! installation_present; then
+    MODE=reinstall
+    MODE_SELECTED_INTERACTIVELY=1
+    AUTO_REPAIR_SELECTED=1
+    warn "Wykryto niekompletną instalację. Wybrano reinstalację naprawczą z zachowaniem konfiguracji i danych."
+    return 0
+  fi
   print_existing_installation_menu
   while true; do
     if choice="$(read_from_tty_timeout "Wybierz operację [1]" "$EXISTING_ACTION_TIMEOUT")"; then
@@ -501,7 +509,7 @@ Podsumowanie operacji
   Zachowanie konfiguracji: $preserve_config
 EOF
   [[ "$DRY_RUN" -eq 1 || "$AUTO_UPDATE_SELECTED" -eq 1 ]] && return 0
-  [[ "$SILENT" -eq 1 && ( "$MODE" == install || "$MODE" == update ) ]] && return 0
+  [[ "$SILENT" -eq 1 && ( "$MODE" == install || "$MODE" == update || "$AUTO_REPAIR_SELECTED" -eq 1 ) ]] && return 0
   if [[ "$YES" -eq 1 && ( "$MODE" != uninstall || "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]]; then return 0; fi
   [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes for this operation."
   have_tty || die "No interactive terminal available for confirmation."
@@ -571,8 +579,10 @@ remove_env_value() {
 }
 generate_secret() { openssl rand -hex "${1:-32}"; }
 prepare_config() {
-  target_cmd mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR" "$(dirname "$BIN_PATH")"
-  target_cmd chmod 0700 "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
+  # DATA_DIR lives inside INSTALL_DIR. Creating it before the atomic release
+  # switch would make mv place the release in INSTALL_DIR/release.
+  target_cmd mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$(dirname "$BIN_PATH")"
+  target_cmd chmod 0700 "$CONFIG_DIR" "$LOG_DIR"
   if [[ ! -f "$CONFIG_FILE" ]]; then
     target_cmd install -m 0600 "$STAGED_APP/.env.example" "$CONFIG_FILE"
   fi
@@ -784,7 +794,12 @@ create_system_user_if_needed() {
 deploy_release() {
   local parent; parent="$(dirname "$INSTALL_DIR")"; target_cmd mkdir -p "$parent"
   RELEASE_BACKUP="$parent/.algen-pam.previous.$(date +%s)"
-  if marker_valid; then safe_target; target_cmd mv "$INSTALL_DIR" "$RELEASE_BACKUP"; fi
+  if marker_valid; then
+    safe_target
+    target_cmd mv "$INSTALL_DIR" "$RELEASE_BACKUP"
+  elif [[ -e "$INSTALL_DIR" ]]; then
+    die "Installation directory exists without a valid marker: $INSTALL_DIR. Move or remove it before a fresh installation."
+  fi
   if ! target_cmd mv "$STAGED_APP" "$INSTALL_DIR"; then
     [[ ! -d "$RELEASE_BACKUP" ]] || target_cmd mv "$RELEASE_BACKUP" "$INSTALL_DIR"
     die "Release switch failed and the previous release was restored."
@@ -796,6 +811,12 @@ deploy_release() {
     as_root chown "$TARGET_USER:$TARGET_GROUP" "$DATA_DIR" "$LOG_DIR"
     as_root find "$DATA_DIR" "$LOG_DIR" -xdev -type f -exec chown "$TARGET_USER:$TARGET_GROUP" '{}' +
   fi
+}
+deployed_release_valid() {
+  [[ -d "$INSTALL_DIR/backend" \
+    && -f "$INSTALL_DIR/backend/app/main.py" \
+    && -x "$INSTALL_DIR/backend/.venv/bin/python" \
+    && -x "$INSTALL_DIR/backend/.venv/bin/uvicorn" ]]
 }
 rollback_release() {
   section "Cofanie zmian"
@@ -823,11 +844,11 @@ bootstrap_admin() {
   [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0
   local -a update_arg=(); [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 1 && "$MODE" != install ]] && update_arg=(--update-password)
   if [[ "$SCOPE" == system && "$(id -u)" -eq 0 && "$TARGET_USER" != root ]]; then
-    (cd "$INSTALL_DIR/backend" && runuser -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
+    (cd "$INSTALL_DIR/backend" && runuser -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}") || return 1
   elif [[ "$SCOPE" == system && "$(id -u)" -ne 0 && "$TARGET_USER" != "$(id -un)" ]]; then
-    (cd "$INSTALL_DIR/backend" && sudo -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
+    (cd "$INSTALL_DIR/backend" && sudo -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}") || return 1
   else
-    (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
+    (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}") || return 1
   fi
   remove_env_value "$CONFIG_FILE" PAM_DEFAULT_ADMIN_PASSWORD
 }
@@ -896,6 +917,10 @@ execute_install_or_update() {
   fi
   section "Wdrażanie aplikacji"
   deploy_release
+  if ! deployed_release_valid; then
+    rollback_release
+    die "Deployed release is incomplete; backend runtime files are missing."
+  fi
   section "Konfigurowanie systemd"
   if ! write_launcher || ! write_service || ! write_desktop || ! bootstrap_admin; then
     rollback_release

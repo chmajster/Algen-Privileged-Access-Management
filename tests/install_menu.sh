@@ -62,4 +62,10 @@ MODE=""
 determine_mode
 [[ "$MODE" == install ]]
 
+installation_present() { return 1; }
+marker_valid() { return 0; }
+MODE=""; AUTO_REPAIR_SELECTED=0
+determine_mode
+[[ "$MODE" == reinstall && "$AUTO_REPAIR_SELECTED" -eq 1 ]]
+
 printf 'Installer menu mapping tests passed.\n'
