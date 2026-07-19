@@ -95,6 +95,7 @@ grep -q '^app=algen-pam$' "$INSTALL_DIR/.algen-pam-install"
 grep -Fqx "install_dir=$INSTALL_DIR" "$INSTALL_DIR/.algen-pam-install"
 find "$TEST_HOME/.config/algen-pam/backups" -type f -name env -print -quit | grep . >/dev/null
 grep -q "ExecStart=.*--host 0.0.0.0 --port $APP_PORT" "$SERVICE_FILE"
+grep -q 'ExecStart=.*/bin/python -m uvicorn ' "$SERVICE_FILE"
 grep -q '^NoNewPrivileges=true$' "$SERVICE_FILE"
 grep -q '^ProtectSystem=strict$' "$SERVICE_FILE"
 grep -q '^UMask=0077$' "$SERVICE_FILE"

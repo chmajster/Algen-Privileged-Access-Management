@@ -673,7 +673,7 @@ write_launcher() {
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
     "[[ \"\${1:-}\" != --version ]] || { echo \"$APP_ID $INSTALLER_VERSION\"; exit 0; }" \
     "cd \"$INSTALL_DIR/backend\"" \
-    "exec \"$INSTALL_DIR/backend/.venv/bin/uvicorn\" app.main:app --host \"\${ALGEN_PAM_HOST:-$APP_HOST}\" --port \"\${ALGEN_PAM_PORT:-$APP_PORT}\" \"\$@\"" >"$tmp"
+    "exec \"$INSTALL_DIR/backend/.venv/bin/python\" -m uvicorn app.main:app --host \"\${ALGEN_PAM_HOST:-$APP_HOST}\" --port \"\${ALGEN_PAM_PORT:-$APP_PORT}\" \"\$@\"" >"$tmp"
   target_cmd install -m 0755 "$tmp" "$BIN_PATH"
 }
 write_service() {
@@ -692,7 +692,7 @@ Type=simple
 $user_line
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$CONFIG_FILE
-ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host $APP_HOST --port $APP_PORT
+ExecStart=$INSTALL_DIR/backend/.venv/bin/python -m uvicorn app.main:app --host $APP_HOST --port $APP_PORT
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -753,7 +753,7 @@ wait_health() { local _; for _ in {1..30}; do curl -fsS --max-time 2 "http://127
 validate_runtime() {
   [[ "$SERVICE_CHOICE" -eq 1 ]] && return 0
   local v_log="$LOG_DIR/validation.log"
-  (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$APP_PORT") >"$v_log" 2>&1 & TEMP_SERVER_PID=$!
+  (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "$APP_PORT") >"$v_log" 2>&1 & TEMP_SERVER_PID=$!
   if ! wait_health; then
     warn "Health check failed; inspect $v_log."
     kill "$TEMP_SERVER_PID" 2>/dev/null || true; wait "$TEMP_SERVER_PID" 2>/dev/null || true; TEMP_SERVER_PID=""
@@ -825,7 +825,8 @@ deployed_release_valid() {
   [[ -d "$INSTALL_DIR/backend" \
     && -f "$INSTALL_DIR/backend/app/main.py" \
     && -x "$INSTALL_DIR/backend/.venv/bin/python" \
-    && -x "$INSTALL_DIR/backend/.venv/bin/uvicorn" ]]
+    && -f "$INSTALL_DIR/backend/.venv/bin/uvicorn" ]] \
+    && (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/python" -c 'import uvicorn')
 }
 rollback_release() {
   section "Cofanie zmian"
@@ -937,14 +938,12 @@ execute_install_or_update() {
   fi
   if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
     section "Uruchamianie usługi"
-    if [[ "$MODE" == install ]]; then systemctl_do enable --now algen-pam.service || { rollback_release; die "Service start failed; rollback completed."; }
-    elif [[ "$SERVICE_WAS_ACTIVE" -eq 1 ]]; then systemctl_do start algen-pam.service || { rollback_release; die "Service restart failed; rollback completed."; }
-    fi
+    systemctl_do enable --now algen-pam.service || { rollback_release; die "Service start failed; rollback completed."; }
   fi
   debug "Previous service state: active=$SERVICE_WAS_ACTIVE enabled=$SERVICE_WAS_ENABLED"
   local valid=0
   section "Walidacja aplikacji"
-  if [[ "$SERVICE_CHOICE" -eq 1 && ( "$SERVICE_WAS_ACTIVE" -eq 1 || "$MODE" == install ) ]]; then
+  if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
     service_is_active && wait_health && valid=1
   else
     if port_in_use "$APP_PORT"; then warn "Cannot run validation: port $APP_PORT is occupied by another process."

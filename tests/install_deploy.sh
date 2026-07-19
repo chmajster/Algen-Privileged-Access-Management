@@ -14,8 +14,9 @@ LOG_DIR="$deploy_root/logs"
 SCOPE=user
 
 mkdir -p "$STAGED_APP/backend/app" "$STAGED_APP/backend/.venv/bin"
-touch "$STAGED_APP/backend/app/main.py" "$STAGED_APP/backend/.venv/bin/python" "$STAGED_APP/backend/.venv/bin/uvicorn" "$CONFIG_FILE"
-chmod +x "$STAGED_APP/backend/.venv/bin/python" "$STAGED_APP/backend/.venv/bin/uvicorn"
+touch "$STAGED_APP/backend/app/main.py" "$STAGED_APP/backend/.venv/bin/uvicorn" "$CONFIG_FILE"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$STAGED_APP/backend/.venv/bin/python"
+chmod +x "$STAGED_APP/backend/.venv/bin/python"
 
 marker_valid() { return 1; }
 target_cmd() { "$@"; }
