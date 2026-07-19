@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class ORMModel(BaseModel):
@@ -39,6 +39,13 @@ class UserBase(BaseModel):
     risk_level: str = "low"
     last_risk_score: int = 0
 
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"admin", "operator", "approver", "user"}:
+            raise ValueError("role must be admin, operator, or user")
+        return value
+
 
 class UserCreate(UserBase):
     password: str = Field(min_length=6)
@@ -59,6 +66,13 @@ class UserUpdate(BaseModel):
     risk_level: str | None = None
     last_risk_score: int | None = None
 
+    @field_validator("role")
+    @classmethod
+    def validate_optional_role(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"admin", "operator", "approver", "user"}:
+            raise ValueError("role must be admin, operator, or user")
+        return value
+
 
 class SshKeyUpdate(BaseModel):
     ssh_public_key: str
@@ -68,6 +82,7 @@ class UserOut(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    email: str
     created_at: datetime
     updated_at: datetime
     last_login_at: datetime | None = None
@@ -76,10 +91,14 @@ class UserOut(UserBase):
     last_identity_sync_at: datetime | None = None
     locked_until: datetime | None = None
     failed_login_count: int = 0
+    access_groups: list[dict[str, Any]] = Field(default_factory=list)
+    active_grant_count: int = 0
+    active_session_count: int = 0
 
 
 class ServerBase(BaseModel):
     hostname: str
+    display_name: str | None = None
     ip_address: str
     ssh_port: int = 22
     environment: str = "dev"
@@ -87,13 +106,12 @@ class ServerBase(BaseModel):
     description: str | None = None
     enabled: bool = True
     ssh_admin_user: str | None = None
-    ssh_private_key_path: str | None = None
+    ssh_auth_type: str = Field(default="vault_secret", pattern=r"^(vault_secret|vault_key|agent|none)$")
     session_recording_enabled: bool = False
     command_logging_enabled: bool = True
     gateway_enabled: bool = True
     gateway_target_user: str | None = None
     gateway_auth_type: str = "key"
-    gateway_private_key_path: str | None = None
     direct_access_enabled: bool = True
     secret_ref_id: int | None = None
     gateway_secret_ref_id: int | None = None
@@ -110,11 +128,36 @@ class ServerBase(BaseModel):
 
 
 class ServerCreate(ServerBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
+    access_group_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("hostname", "ip_address")
+    @classmethod
+    def validate_host(cls, value: str) -> str:
+        import ipaddress
+        import re
+
+        value = value.strip()
+        try:
+            ipaddress.ip_address(value)
+            return value
+        except ValueError:
+            if not re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", value):
+                raise ValueError("must be a valid IP address or FQDN")
+            return value
+
+    @field_validator("ssh_port")
+    @classmethod
+    def validate_ssh_port(cls, value: int) -> int:
+        if not 1 <= value <= 65535:
+            raise ValueError("SSH port must be between 1 and 65535")
+        return value
 
 
 class ServerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     hostname: str | None = None
+    display_name: str | None = None
     ip_address: str | None = None
     ssh_port: int | None = None
     environment: str | None = None
@@ -122,13 +165,12 @@ class ServerUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     ssh_admin_user: str | None = None
-    ssh_private_key_path: str | None = None
+    ssh_auth_type: str | None = Field(default=None, pattern=r"^(vault_secret|vault_key|agent|none)$")
     session_recording_enabled: bool | None = None
     command_logging_enabled: bool | None = None
     gateway_enabled: bool | None = None
     gateway_target_user: str | None = None
     gateway_auth_type: str | None = None
-    gateway_private_key_path: str | None = None
     direct_access_enabled: bool | None = None
     secret_ref_id: int | None = None
     gateway_secret_ref_id: int | None = None
@@ -142,6 +184,31 @@ class ServerUpdate(BaseModel):
     require_session_recording: bool | None = None
     require_approval: bool | None = None
     require_mfa: bool | None = None
+    access_group_ids: list[int] | None = None
+
+    @field_validator("hostname", "ip_address")
+    @classmethod
+    def validate_optional_host(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        import ipaddress
+        import re
+
+        value = value.strip()
+        try:
+            ipaddress.ip_address(value)
+            return value
+        except ValueError:
+            if not re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", value):
+                raise ValueError("must be a valid IP address or FQDN")
+            return value
+
+    @field_validator("ssh_port")
+    @classmethod
+    def validate_optional_ssh_port(cls, value: int | None) -> int | None:
+        if value is not None and not 1 <= value <= 65535:
+            raise ValueError("SSH port must be between 1 and 65535")
+        return value
 
 
 class ServerOut(ServerBase):
@@ -150,6 +217,11 @@ class ServerOut(ServerBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    access_group_ids: list[int] = Field(default_factory=list)
+    # Legacy filesystem paths may still exist after upgrades, but are never
+    # serialized. New configuration uses Secrets Vault references.
+    ssh_private_key_path: str | None = Field(default=None, exclude=True)
+    gateway_private_key_path: str | None = Field(default=None, exclude=True)
 
 
 class AccessRequestCreate(BaseModel):
@@ -265,6 +337,10 @@ class AuditLogOut(ORMModel):
     action: str
     message: str
     source_ip: str | None = None
+    user_agent: str | None = None
+    object_type: str | None = None
+    object_id: str | None = None
+    result: str = "success"
     metadata_json: str | None = None
     created_at: datetime
     username: str | None = None
@@ -617,6 +693,213 @@ class ServerGroupOut(ORMModel):
     environment: str | None = None
     created_at: datetime
     updated_at: datetime
+class PermissionEntry(BaseModel):
+    permission: str = Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+    effect: str = Field(pattern=r"^(allow|deny)$")
+    membership_id: int | None = None
+
+
+class PermissionTemplateOut(ORMModel):
+    id: int
+    name: str
+    description: str | None = None
+    permissions_json: str
+    built_in: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PermissionTemplateCopy(BaseModel):
+    name: str = Field(min_length=2, max_length=128, pattern=r"^[\w .-]+$")
+
+
+class PermissionTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=128, pattern=r"^[\w .-]+$")
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: dict[str, str] | None = None
+
+
+class AccessGroupBase(BaseModel):
+    name: str = Field(min_length=2, max_length=128, pattern=r"^[\w .-]+$")
+    description: str | None = Field(default=None, max_length=2000)
+    environment: str | None = Field(default=None, max_length=64)
+    is_active: bool = True
+    enabled: bool | None = None
+    allowed_access_types: str = "ssh_only"
+    max_grant_minutes: int = Field(default=60, ge=1, le=10080)
+    allowed_durations: str = "30,60"
+    require_approval: bool = True
+    require_mfa: bool = False
+    require_gateway: bool = False
+    deny_direct_ssh: bool = False
+    require_command_logging: bool = True
+    require_session_recording: bool = False
+    allowed_hours: str | None = None
+    allowed_weekdays: str = "0,1,2,3,4,5,6"
+    max_concurrent_grants: int = Field(default=1, ge=1, le=100)
+    max_active_sessions: int = Field(default=1, ge=1, le=100)
+    allow_self_extension: bool = False
+    allow_auto_grant: bool = False
+    require_reason: bool = True
+    min_reason_length: int = Field(default=10, ge=0, le=1000)
+    revoke_on_membership_loss: bool = True
+    terminate_sessions_on_membership_loss: bool = True
+
+    @field_validator("allowed_access_types")
+    @classmethod
+    def validate_access_types(cls, value: str) -> str:
+        values = {item.strip() for item in value.split(",") if item.strip()}
+        if not values or not values <= {"ssh", "ssh_only", "limited_sudo", "full_sudo"}:
+            raise ValueError("allowed_access_types contains an unsupported type")
+        return ",".join(sorted(values))
+
+    @field_validator("allowed_durations")
+    @classmethod
+    def validate_durations(cls, value: str) -> str:
+        values = [item.strip() for item in value.split(",") if item.strip()]
+        if not values or any(not item.isdigit() or not 1 <= int(item) <= 10080 for item in values):
+            raise ValueError("allowed_durations must be comma-separated minutes between 1 and 10080")
+        return ",".join(values)
+
+    @field_validator("allowed_weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: str) -> str:
+        values = [item.strip() for item in value.split(",") if item.strip()]
+        if not values or any(item not in {"0", "1", "2", "3", "4", "5", "6"} for item in values):
+            raise ValueError("allowed_weekdays must contain values from 0 to 6")
+        return ",".join(values)
+
+    @field_validator("allowed_hours")
+    @classmethod
+    def validate_hours(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        parts = value.split("-", 1)
+        if len(parts) != 2 or any(not item.isdigit() or not 0 <= int(item) <= 23 for item in parts):
+            raise ValueError("allowed_hours must use UTC hour range such as 8-18")
+        return value
+
+
+class AccessGroupCreate(AccessGroupBase):
+    pass
+
+
+class AccessGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=128, pattern=r"^[\w .-]+$")
+    description: str | None = Field(default=None, max_length=2000)
+    environment: str | None = Field(default=None, max_length=64)
+    is_active: bool | None = None
+    enabled: bool | None = None
+    allowed_access_types: str | None = None
+    max_grant_minutes: int | None = Field(default=None, ge=1, le=10080)
+    allowed_durations: str | None = None
+    require_approval: bool | None = None
+    require_mfa: bool | None = None
+    require_gateway: bool | None = None
+    deny_direct_ssh: bool | None = None
+    require_command_logging: bool | None = None
+    require_session_recording: bool | None = None
+    allowed_hours: str | None = None
+    allowed_weekdays: str | None = None
+    max_concurrent_grants: int | None = Field(default=None, ge=1, le=100)
+    max_active_sessions: int | None = Field(default=None, ge=1, le=100)
+    allow_self_extension: bool | None = None
+    allow_auto_grant: bool | None = None
+    require_reason: bool | None = None
+    min_reason_length: int | None = Field(default=None, ge=0, le=1000)
+    revoke_on_membership_loss: bool | None = None
+    terminate_sessions_on_membership_loss: bool | None = None
+
+    @field_validator("allowed_access_types")
+    @classmethod
+    def validate_optional_access_types(cls, value: str | None) -> str | None:
+        return AccessGroupBase.validate_access_types(value) if value is not None else None
+
+    @field_validator("allowed_durations")
+    @classmethod
+    def validate_optional_durations(cls, value: str | None) -> str | None:
+        return AccessGroupBase.validate_durations(value) if value is not None else None
+
+    @field_validator("allowed_weekdays")
+    @classmethod
+    def validate_optional_weekdays(cls, value: str | None) -> str | None:
+        return AccessGroupBase.validate_weekdays(value) if value is not None else None
+
+    @field_validator("allowed_hours")
+    @classmethod
+    def validate_optional_hours(cls, value: str | None) -> str | None:
+        return AccessGroupBase.validate_hours(value)
+
+
+class AccessGroupOut(AccessGroupBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    enabled: bool = True
+    is_system: bool = False
+    created_at: datetime
+    updated_at: datetime
+    user_count: int = 0
+    server_count: int = 0
+    active_grant_count: int = 0
+    active_session_count: int = 0
+
+
+class AccessGroupUserIn(BaseModel):
+    user_ids: list[int] = Field(min_length=1, max_length=200)
+    group_role: str = Field(default="user", pattern=r"^(group_admin|operator|user|custom|auditor)$")
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    expires_at: datetime | None = None
+    is_active: bool = True
+    permission_template_id: int | None = None
+
+
+class AccessGroupUserUpdate(BaseModel):
+    group_role: str | None = Field(default=None, pattern=r"^(group_admin|operator|user|custom|auditor)$")
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    expires_at: datetime | None = None
+    is_active: bool | None = None
+    permission_template_id: int | None = None
+
+
+class AccessGroupUserOut(ORMModel):
+    id: int
+    access_group_id: int
+    server_group_id: int | None = None
+    user_id: int
+    group_role: str
+    assigned_at: datetime
+    assigned_by_id: int | None = None
+    expires_at: datetime | None = None
+    valid_from: datetime | None = None
+    is_active: bool
+    enabled: bool = True
+    permission_template_id: int | None = None
+    username: str | None = None
+    email: str | None = None
+
+
+class AccessGroupServersIn(BaseModel):
+    server_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class EffectivePermissionOut(BaseModel):
+    permission: str
+    effect: str
+    group_id: int | None = None
+    group_name: str | None = None
+    group_role: str | None = None
+    source: str
+    reason: str | None = None
+
+
+class UserRoleUpdate(BaseModel):
+    role: str = Field(pattern=r"^(admin|operator|user)$")
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
 
 
 class MfaStatusOut(BaseModel):
@@ -729,6 +1012,7 @@ class SettingsOut(BaseModel):
     session_log_dir: str
     scheduler_interval_seconds: int
     access_mode: str
+    group_scoped_access: bool
     gateway_enabled: bool
     gateway_host: str
     gateway_port: int

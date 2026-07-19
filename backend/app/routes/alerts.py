@@ -8,6 +8,7 @@ from app import schemas
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import AccessGrant, AccessRequest, Alert, User, utcnow
+from app.rbac import has_permission, is_global_admin, permitted_server_ids
 
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -15,10 +16,9 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 def _visible_query(db: DBSession, user: User):
     query = db.query(Alert)
-    if user.role == "user":
-        query = query.filter(Alert.user_id == user.id)
-    elif user.role == "approver":
-        query = query.outerjoin(AccessGrant, Alert.grant_id == AccessGrant.id).outerjoin(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter((Alert.user_id == user.id) | (AccessRequest.approver_id == user.id))
+    if not is_global_admin(user):
+        ids = permitted_server_ids(db, user, "alerts.view") or set()
+        query = query.filter((Alert.user_id == user.id) | Alert.server_id.in_(ids))
     return query
 
 
@@ -50,6 +50,8 @@ def acknowledge_alert(alert_id: int, current_user: User = Depends(get_current_us
     item = db.get(Alert, alert_id)
     if not item or item not in _visible_query(db, current_user).filter(Alert.id == alert_id).all():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Alert not found")
+    if not is_global_admin(current_user) and (item.server_id is None or not has_permission(db, current_user, "alerts.manage", server_id=item.server_id)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing alerts.manage permission")
     item.status = "acknowledged"
     item.acknowledged_by = current_user.id
     item.acknowledged_at = utcnow()
@@ -63,7 +65,9 @@ def resolve_alert(alert_id: int, current_user: User = Depends(get_current_user),
     item = db.get(Alert, alert_id)
     if not item or item not in _visible_query(db, current_user).filter(Alert.id == alert_id).all():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Alert not found")
-    if item.severity == "critical" and current_user.role != "admin":
+    if not is_global_admin(current_user) and (item.server_id is None or not has_permission(db, current_user, "alerts.manage", server_id=item.server_id)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing alerts.manage permission")
+    if item.severity == "critical" and not is_global_admin(current_user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admin can resolve critical alerts")
     item.status = "resolved"
     item.resolved_by = current_user.id
@@ -75,7 +79,7 @@ def resolve_alert(alert_id: int, current_user: User = Depends(get_current_user),
 
 @router.post("/{alert_id:int}/dismiss", response_model=schemas.AlertOut)
 def dismiss_alert(alert_id: int, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
-    if current_user.role != "admin":
+    if not is_global_admin(current_user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admin can dismiss alerts")
     item = db.get(Alert, alert_id)
     if not item:

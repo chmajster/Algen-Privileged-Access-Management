@@ -29,6 +29,7 @@ def client():
         db.close()
     with TestClient(app) as test_client:
         yield test_client
+    engine.dispose()
     if db_file.exists():
         db_file.unlink()
 

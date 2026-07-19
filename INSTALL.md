@@ -1,516 +1,203 @@
-# Instalacja Algen-PAM / Linux PAM Lite
+# Instalacja Algen PAM
 
-Ten projekt jest aplikacja webowa PAM Lite:
+`install.sh` instaluje backend FastAPI i statyczny frontend, tworzy Python
+virtualenv, bezpieczny plik `.env`, launcher oraz opcjonalną usługę systemd.
+Backend wymaga Pythona 3.12, startuje jako `uvicorn app.main:app`, czyta `.env` z
+katalogu głównego aplikacji i udostępnia health check `GET /api/health`.
 
-- backend: Python FastAPI, SQLAlchemy, APScheduler, Paramiko/AsyncSSH,
-- frontend: statyczny HTML/CSS/JavaScript serwowany przez FastAPI,
-- start lokalny: `uvicorn app.main:app --host 0.0.0.0 --port 8080`,
-- dane domyslne: SQLite,
-- usluga systemd: opcjonalna, przydatna gdy aplikacja ma dzialac stale w tle.
+## Wymagania systemowe
 
-Instalator znajduje sie w pliku `install.sh`. Pobiera kod z repozytorium
-`https://github.com/chmajster/Algen-Privileged-Access-Management`, tworzy virtualenv, instaluje zaleznosci
-Pythona, przygotowuje konfiguracje, wrapper `algen-pam` oraz opcjonalna usluge
-systemd i skrot `.desktop`.
+- Linux: Debian/Ubuntu, RHEL/Rocky/Alma/Fedora, Arch albo openSUSE/SUSE.
+- Python 3.12 z modułami `venv` i `pip` (wersja starsza jest błędem).
+- `tar`, `openssl` oraz `curl` lub `wget`.
+- biblioteka PAM dla domyślnego `PAM_LOCAL_AUTH_MODE=os`.
+- Git wyłącznie dla repozytorium podanego adresem SSH.
+- systemd tylko wtedy, gdy użyto `--service`.
 
-Podczas instalacji tworzony jest lokalny administrator aplikacji. To konto ma
-role `admin` i dostep do panelu administracyjnego, zarzadzania uzytkownikami,
-policy, policy engine, sekretami, tozsamoscia, alertami, ustawieniami runtime i
-audit logami.
+Instalator wykrywa brakujące narzędzia i używa odpowiednio `apt`, `dnf`,
+`pacman` albo `zypper`. Operacje systemowe wymagają procesu root lub `sudo`.
+Aplikacja nigdy nie jest uruchamiana jako root: przy bezpośrednim uruchomieniu
+instalatora przez root tworzony jest systemowy użytkownik `algen-pam`, a przy
+`sudo` używane jest konto z `SUDO_USER`.
 
-## Wymagania
+`sudo ./install.sh --user` jest celowo odrzucane. Instalację użytkownika należy
+uruchomić bez sudo, aby nie pomylić katalogu domowego z `/root`.
 
-Obslugiwane sa dystrybucje z menedzerem pakietow:
+## Tryby działania
 
-- Debian/Ubuntu: `apt`
-- Fedora: `dnf`
-- Arch Linux: `pacman`
+Każde uruchomienie ma jeden tryb:
 
-Wymagane narzedzia systemowe:
+- `--install` — świeża instalacja;
+- `--update` — bezpieczna aktualizacja istniejącej instalacji;
+- `--reinstall` — wymiana aplikacji z zachowaniem konfiguracji i danych;
+- `--backup` — kopia `.env` i danych;
+- `--remove-app` — usunięcie kodu i integracji, zachowanie stanu;
+- `--uninstall` — pełna deinstalacja.
 
-- Linux,
-- Python 3.12 zalecany,
-- `python3-venv` / modul `venv`,
-- `pip`,
-- `curl` albo `wget`,
-- `tar`.
+Bez jawnego trybu instalator wybiera `install`, gdy nie ma znacznika, albo
+`update`, gdy instalacja istnieje. Sprzeczne opcje, np. `--update --uninstall`,
+kończą się błędem.
 
-Instalator nie wykonuje `git clone`, `git fetch` ani `git pull`. Przy kazdej
-instalacji i aktualizacji pobiera swieze archiwum `tar.gz` najnowszego stanu
-brancha `main` (albo brancha/taga wskazanego argumentem).
-
-## Bezposrednia instalacja z sieci
-
-Instalator mozna uruchomic bez klonowania repozytorium
-[chmajster/Algen-Privileged-Access-Management](https://github.com/chmajster/Algen-Privileged-Access-Management):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash
-```
-
-Mimo ze standardowe wejscie Bash jest zajete przez potok, instalator automatycznie
-podlacza pytania do terminala `/dev/tty`. Dzieki temu powyzsze polecenie uruchamia
-pelny kreator interaktywny oraz menu wykrytej instalacji.
-
-Wariant bez pytan:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
-```
-
-Bez wskazania zakresu instalator domyslnie instaluje aplikacje systemowo w
-`/opt/algen-pam`. Uzyj `--user`, aby wybrac instalacje w katalogu biezacego
-uzytkownika.
-
-Argumenty po `bash -s --` sa przekazywane do instalatora, na przyklad:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes --system --service --port 8081
-```
-
-## Instalacja UI
-
-Uruchom:
+## Instalacja interaktywna
 
 ```bash
 ./install.sh
 ```
 
-Instalator przeprowadzi przez:
+Przy istniejącej instalacji kreator (`whiptail`, `dialog` albo zwykły terminal)
+pokazuje menu:
 
-- ekran powitalny,
-- sprawdzenie systemu i zaleznosci,
-- wybor instalacji uzytkownika albo systemowej,
-- wybor katalogu instalacji,
-- opcjonalne utworzenie uslugi systemd,
-- opcjonalne utworzenie skrotu `.desktop`,
-- przypisanie roli admin istniejacemu kontu systemu Linux,
-- podsumowanie,
-- instalacje i walidacje.
+1. aktualizacja aplikacji;
+2. reinstalacja;
+3. backup konfiguracji;
+4. usunięcie aplikacji z zachowaniem danych;
+5. pełna deinstalacja;
+6. anulowanie.
 
-Jezeli dostepny jest `whiptail` albo `dialog`, zostanie uzyty prosty TUI.
-W przeciwnym razie instalator przejdzie do tekstowych pytan w terminalu.
+Wybór i końcowe podsumowanie wymagają jawnego potwierdzenia. Zamknięcie okna,
+Ctrl+C, EOF albo brak terminala przerywa działanie. Przed zatwierdzeniem nie są
+wykonywane żadne operacje systemowe.
 
-## Cicha instalacja CLI
+## Instalacja silent
 
-Instalacja bez pytan:
-
-```bash
-./install.sh --silent --yes
-```
-
-Instalacja z jawnym kontem Linux, ktore otrzyma role admina:
+Tryb silent nigdy nie wykonuje `read` ani nie otwiera TUI:
 
 ```bash
-./install.sh --silent --yes --admin-user "$(id -un)" --admin-email "$(id -un)@localhost.localdomain"
+./install.sh --silent --yes --user --no-service
+sudo ./install.sh --silent --yes --system --service
 ```
 
-Tryb zgodnosci wstecznej z haslem w bazie aplikacji:
+Brak wymaganej wartości albo konflikt portu kończy się błędem. Automatyczny wybór
+wolnego portu jest możliwy tylko po dodaniu `--auto-port`:
 
 ```bash
-PAM_LOCAL_AUTH_MODE=database ./install.sh --silent --yes --generate-admin-password
+./install.sh --silent --yes --user --port 8080 --gateway-port 2222 --auto-port
 ```
 
-Instalacja systemowa z usluga:
+## Źródło, branch i tag
+
+Domyślne źródło to branch `main` repozytorium projektu. Przykłady:
 
 ```bash
-./install.sh --silent --install-dir /opt/algen-pam --system --service --yes
+./install.sh --install --branch main
+./install.sh --install --tag v1.2.0
+./install.sh --install --repo https://github.com/example/fork
+./install.sh --install --repo /srv/src/algen-pam
 ```
 
-Instalacja uzytkownika bez uslugi:
+Dla HTTPS pobierane jest archiwum konkretnego brancha/taga, sprawdzane przez
+`tar -t` i walidowane pod kątem niebezpiecznych ścieżek oraz wymaganej struktury.
+Dla SSH wykonywane są jawne `fetch` oraz checkout wybranej rewizji. Branch i tag
+nie mogą być podane jednocześnie. `.git`, lokalny `.env`, `data` i istniejący
+virtualenv nie są kopiowane.
+
+## Administrator i sekrety
 
 ```bash
-./install.sh --silent --user --no-service --install-dir ~/.local/share/algen-pam --yes
+./install.sh --install --admin-user jan --admin-email jan@example.org
+PAM_LOCAL_AUTH_MODE=database ./install.sh --install --generate-admin-password
 ```
 
-Instalacja z wybranego brancha:
+Bootstrap korzysta z `python -m app.bootstrap_admin`. Hasło jest generowane albo
+pobierane z argumentu, przekazywane tylko do bootstrapu, usuwane z `.env`, a
+zmienna powłoki jest czyszczona przez `unset`. Wygenerowane hasło jest pokazane
+raz. Hasła, tokeny, klucze prywatne i zawartość `.env` nie trafiają do logu ani
+do outputu `--verbose`/`--dry-run`.
+
+Domyślne `change-me` i `change-this-32-byte-key` z `.env.example` są zastępowane
+losowymi sekretami. Zapis `.env` jest atomowy i obsługuje spacje, `#` i znaki
+specjalne; nowe linie i niepoprawne nazwy kluczy są odrzucane.
+
+## Lokalizacje i uprawnienia
+
+| Zakres | Aplikacja | Konfiguracja | Log | Launcher |
+|---|---|---|---|---|
+| system | `/opt/algen-pam` | `/etc/algen-pam/.env` | `/var/log/algen-pam/install.log` | `/usr/local/bin/algen-pam` |
+| user | `~/.local/share/algen-pam` | `~/.config/algen-pam/.env` | `~/.local/state/algen-pam/logs/install.log` | `~/.local/bin/algen-pam` |
+
+Dane SQLite i klucz hosta gateway są w `<app>/data`. Katalogi konfiguracji,
+danych i logów mają `0700`, `.env` i znacznik `0600`, a `UMask=0077` chroni nowe
+pliki usługi. Klucze prywatne powinny mieć `0600`.
+
+## Aktualizacja, walidacja i rollback
 
 ```bash
-./install.sh --silent --yes --branch main
+sudo ./install.sh --update --system --yes
+./install.sh --update --user --yes
+./install.sh --reinstall --user --yes
 ```
 
-Instalacja z taga:
+Aktualizacja:
 
-```bash
-./install.sh --silent --yes --tag v1.0.0
-```
+1. pobiera kod do katalogu tymczasowego;
+2. waliduje strukturę;
+3. tworzy virtualenv i instaluje zależności;
+4. sprawdza importy backendu;
+5. zapamiętuje stan `active` i `enabled` usługi;
+6. tworzy backup konfiguracji i danych;
+7. zatrzymuje aktywną usługę;
+8. przełącza kompletne wydanie i zachowuje `data` oraz `.env`;
+9. przywraca tylko wcześniejszy stan uruchomienia;
+10. sprawdza `/api/health` i w razie błędu automatycznie przywraca poprzednie
+    wydanie.
 
-Nadpisanie repozytorium:
-
-```bash
-./install.sh --silent --yes --repo https://github.com/chmajster/Algen-Privileged-Access-Management
-```
-
-## Sciezki
-
-Instalacja systemowa:
-
-```text
-/opt/algen-pam
-/usr/local/bin/algen-pam
-/etc/algen-pam/.env
-/var/log/algen-pam/install.log
-```
-
-Instalacja uzytkownika:
-
-```text
-~/.local/share/algen-pam
-~/.local/bin/algen-pam
-~/.config/algen-pam/.env
-~/.local/state/algen-pam/logs/install.log
-```
-
-Instalator tworzy rowniez katalog `data` w katalogu instalacji. Domyslna baza
-SQLite jest zapisywana jako:
-
-```text
-<install-dir>/data/pam_lite.db
-```
-
-## Konfiguracja
-
-Konfiguracja jest tworzona na podstawie `.env.example` i zapisywana w:
-
-- `/etc/algen-pam/.env` dla instalacji systemowej,
-- `~/.config/algen-pam/.env` dla instalacji uzytkownika.
-
-W katalogu aplikacji powstaje symlink `.env` wskazujacy na ten plik, poniewaz
-aplikacja FastAPI czyta konfiguracje z katalogu glownego repozytorium.
-
-Przed uzyciem produkcyjnym sprawdz co najmniej:
-
-- `SECRET_KEY`,
-- `PAM_DEFAULT_ADMIN_USER`,
-- `PAM_DEFAULT_ADMIN_EMAIL`,
-- `PAM_DEFAULT_ADMIN_PASSWORD`,
-- `PAM_EXECUTOR_MODE`,
-- `PAM_EXECUTOR_SSH_KEY_PATH`,
-- ustawienia LDAP/OIDC/MFA, jezeli sa uzywane.
-
-## Uruchamianie
-
-Po instalacji uzytkownika:
-
-```bash
-~/.local/bin/algen-pam
-```
-
-Po instalacji systemowej:
-
-```bash
-algen-pam
-```
-
-Nastepnie otworz:
-
-```text
-http://127.0.0.1:8080/
-http://ADRES_IP_SERWERA:8080/
-```
-
-Instalator ustawia `ALGEN_PAM_HOST=0.0.0.0`, wiec aplikacja nasluchuje na
-wszystkich interfejsach sieciowych. Dostep z innych komputerow wymaga zezwolenia
-na wybrany port TCP w firewallu hosta i ewentualnym firewallu sieciowym.
-
-Domyslne konta demo ponizej dzialaja tylko w jawnym trybie
-`PAM_LOCAL_AUTH_MODE=database`:
-
-```text
-admin / admin123
-approver / approver123
-user / user123
-```
-
-W domyslnym trybie `os` instalator wymaga istniejacego konta Linux i przypisuje
-mu role administratora w bazie aplikacji. Nie tworzy konta systemowego i nie
-zmienia jego hasla. Rekord roli aplikacyjnej mozna odtworzyc przez:
-
-```bash
-cd <install-dir>/backend
-./.venv/bin/python -m app.bootstrap_admin --username "$(id -un)" --email "$(id -un)@localhost.localdomain" --password "$(openssl rand -hex 24)"
-```
-
-Haslem logowania pozostaje haslo konta systemu operacyjnego. Argumenty
-`--admin-password` i `--generate-admin-password` maja znaczenie tylko w trybie
-zgodnosci `PAM_LOCAL_AUTH_MODE=database`.
+Usługa wcześniej nieaktywna nie jest uruchamiana, a wyłączona nie jest włączana.
+Usunięte z repozytorium pliki znikają, bo wdrażany jest kompletny staging, nie
+kopiowanie in-place. W razie błędu przed przełączeniem staging pozostaje w
+lokalizacji wskazanej w komunikacie diagnostycznym.
 
 ## systemd
 
-Usluga systemd jest opcjonalna. Aplikacja moze dzialac jako proces webowy w tle,
-wiec `--service` ma sens na serwerze.
-
-Instalacja systemowa:
-
 ```bash
-./install.sh --silent --system --service --yes
-sudo systemctl status algen-pam
-sudo systemctl stop algen-pam
-sudo systemctl start algen-pam
+sudo ./install.sh --install --system --service --yes
+./install.sh --install --user --service --yes
 ```
 
-Instalacja uzytkownika:
+Jednostka ustawia `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`,
+`ProtectHome`, `ReadWritePaths` dla danych i logów oraz `UMask=0077`. Dla zakresu
+user używane jest wyłącznie `systemctl --user`. Jeśli usługa ma działać bez
+aktywnej sesji, administrator może jawnie włączyć linger:
 
 ```bash
-./install.sh --silent --user --service --yes
-systemctl --user status algen-pam
-systemctl --user stop algen-pam
-systemctl --user start algen-pam
+sudo loginctl enable-linger USER
 ```
 
-## Skrot desktop
-
-Skrot `.desktop` otwiera interfejs webowy:
+## Backup i deinstalacja
 
 ```bash
-./install.sh --silent --user --desktop --yes
-```
-
-Skrot zaklada, ze aplikacja slucha na `http://127.0.0.1:8080/`.
-
-## Wykrywanie istniejacej instalacji
-
-Przy zwyklym uruchomieniu `./install.sh` instalator wykrywa istniejaca instalacje
-uzytkownika albo systemowa i wyswietla menu:
-
-```text
-Choose action (automatic update starts after 5 seconds):
-  1) Update application (backup and keep config)
-  2) Reinstall application (clean app files; keep config, data, and logs)
-  3) Backup config only
-  4) Remove app (keep config, data, and logs)
-  5) Remove app and all files
-  6) Abort
-Action [1] (auto update in 5s):
-```
-
-Brak wyboru przez 5 sekund uruchamia opcje `1`. Aktualizacja wykonuje kopie
-konfiguracji w podkatalogu `backups` katalogu konfiguracji. Reinstalacja usuwa
-tylko pliki aplikacji i zachowuje konfiguracje, katalog `data` oraz logi. Opcja
-`4` usuwa program i integracje systemd/desktop, ale pozostawia te same dane.
-
-W trybie `--silent --yes` wykryta instalacja jest aktualizowana automatycznie bez
-oczekiwania na menu.
-
-## Aktualizacja
-
-Aktualizacja zachowuje konfiguracje i dane:
-
-```bash
-./install.sh --update --user --yes
-```
-
-Dla instalacji systemowej:
-
-```bash
-./install.sh --update --system --yes
-```
-
-Jezeli usluga byla aktywna, instalator zatrzymuje ja przed aktualizacja i probuje
-uruchomic ponownie po zakonczeniu.
-
-Istniejacy plik uslugi jest automatycznie wykrywany i zachowywany podczas
-aktualizacji, nawet gdy ponowne uruchomienie instalatora nie zawiera opcji
-`--service`. Po update instalator wymaga, aby `algen-pam.service` byla wlaczona
-(`is-enabled`), aktywna (`is-active`) i odpowiadala na `/api/health`. Niespelnienie
-ktoregokolwiek warunku konczy aktualizacje bledem i wskazuje log instalatora oraz
-journal systemd.
-
-Aktualizacja nie zmienia hasla konta systemu Linux. W trybie zgodnosci database
-haslo aplikacyjne mozna zmienic jawnie:
-
-```bash
-PAM_LOCAL_AUTH_MODE=database ./install.sh --update --user --yes --admin-password 'nowe-haslo'
-```
-
-## Deinstalacja
-
-Usuniecie instalacji uzytkownika:
-
-```bash
+./install.sh --backup --user --yes
+./install.sh --remove-app --user --yes
 ./install.sh --uninstall --user --yes
+./install.sh --uninstall --user --yes --keep-config --keep-data --keep-logs
 ```
 
-Usuniecie instalacji systemowej:
+Backup trafia do `<config>/backups/TIMESTAMP/`. Usuwanie wymaga absolutnej,
+niesymbolicznej ścieżki, poprawnego znacznika z nazwą aplikacji i zgodnym
+katalogiem oraz braku nieoczekiwanych symlinków wychodzących poza instalację.
+Znacznik zawiera nazwę aplikacji, wersję instalatora, zakres, katalog i datę.
+Końcowy komunikat pełnej deinstalacji nie zapisuje do usuniętego katalogu logów.
 
-```bash
-./install.sh --uninstall --system --yes
-```
-
-Zachowanie konfiguracji:
-
-```bash
-./install.sh --uninstall --user --keep-config --yes
-```
-
-Zachowanie logow:
-
-```bash
-./install.sh --uninstall --user --keep-logs --yes
-```
-
-Deinstalator:
-
-- zatrzymuje usluge systemd, jezeli dziala,
-- wylacza usluge,
-- usuwa plik uslugi,
-- usuwa wrapper `algen-pam`,
-- usuwa katalog aplikacji,
-- opcjonalnie usuwa konfiguracje i logi.
-
-Dla bezpieczenstwa deinstalator odmawia usuwania katalogow, ktore nie wygladaja
-jak katalogi tej aplikacji.
-
-## Dry run i walidacja
-
-Pomoc:
-
-```bash
-./install.sh --help
-```
-
-Plan bez zapisu:
-
-```bash
-./install.sh --dry-run
-```
-
-Cicha walidacja parsera i planu:
-
-```bash
-./install.sh --silent --yes --user --no-service --dry-run
-```
-
-Instalator po instalacji sprawdza:
-
-- czy wrapper startowy istnieje,
-- czy `algen-pam --version` odpowiada,
-- status systemd, jezeli utworzono usluge,
-- czy aplikacja odpowiada na endpointzie `/api/health`.
-
-Bez uslugi systemd instalator uruchamia aplikacje tymczasowo na potrzeby testu i
-zatrzymuje ja po poprawnej odpowiedzi. Z usluga systemd sprawdza dzialajacy proces
-uslugi. Brak poprawnej odpowiedzi konczy instalacje bledem i wskazuje logi.
-
-Pelny test cyklu instalacji i aktualizacji na Linuxie:
-
-```bash
-bash tests/install_integration.sh
-```
-
-Test korzysta z katalogu tymczasowego i izolowanej implementacji `systemctl`.
-Sprawdza swieza instalacje, aktywny proces uslugi, odpowiedz `/api/health`, restart
-po automatycznym update, kopie konfiguracji, zachowanie danych, poprawnosc unit
-file oraz zatrzymanie i usuniecie uslugi podczas deinstalacji.
-
-## Argumenty
-
-```text
---silent              uruchamia instalacje bez UI i bez pytan
---yes, -y             automatycznie akceptuje operacje
---install-dir PATH    katalog instalacji
---user                instalacja dla biezacego uzytkownika
---system              instalacja systemowa (domyslnie /opt/algen-pam)
---port PORT           port HTTP aplikacji (domyslnie 8080)
---gateway-port PORT   port bramy SSH (domyslnie 2222)
---service             utworz i wlacz usluge systemd
---no-service          nie tworz uslugi systemd
---desktop             utworz skrot aplikacji
---no-desktop          nie tworz skrotu aplikacji
---admin-user NAME     istniejace konto Linux z rola administratora aplikacji
---admin-email EMAIL   email lokalnego administratora
---admin-password PASS haslo tylko dla trybu zgodnosci database
---generate-admin-password
-                     generuje losowe haslo administratora
---branch NAME         pobierz wskazany branch repozytorium
---tag NAME            pobierz wskazany tag/release
---repo URL            nadpisuje URL repozytorium
---update              aktualizuje istniejaca instalacje
---uninstall           usuwa program
---keep-config         zostawia konfiguracje przy deinstalacji
---keep-logs           zostawia logi przy deinstalacji
---dry-run             pokazuje co zostanie wykonane
---verbose             pokazuje dokladniejsze logi
---help, -h            pomoc
-```
-
-## Troubleshooting
-
-### Brak sudo
-
-Instalacja systemowa wymaga `sudo`. Uzyj instalacji uzytkownika:
-
-```bash
-./install.sh --silent --user --yes
-```
-
-### Brak internetu albo GitHub niedostepny
-
-Instalator przerwie prace z komunikatem bledu pobierania. Sprawdz DNS, proxy,
-firewall albo uzyj `--repo` z lokalnym mirror URL.
-
-### Pobieranie najnowszej wersji
-
-Instalator zawsze pobiera archiwum z GitHuba i nie wymaga `git`. Archiwum jest
-najpierw pobierane, sprawdzane przez `tar` i rozpakowywane w katalogu tymczasowym.
-Dopiero po poprawnej weryfikacji instalator wymienia pliki aplikacji, zachowujac
-konfiguracje, dane i logi.
-
-### Linux PAM authentication is unavailable
-
-Endpoint `/api/health` sprawdza rowniez dostepnosc backendu PAM. Diagnostyka:
+## Diagnostyka i odzyskiwanie
 
 ```bash
 curl -i http://127.0.0.1:8080/api/health
-sudo journalctl -u algen-pam -n 100 --no-pager
+systemctl status algen-pam
+systemctl --user status algen-pam
 ```
 
-Na Debianie/Ubuntu wymagane sa biblioteka systemowa i modul Pythona:
+Log instalatora znajduje się w tabeli lokalizacji powyżej. Błąd podaje etap,
+lokalizację logu i zachowanego stagingu. Rollback po nieudanym health checku jest
+automatyczny. Backup ręczny można rozpakować przez `tar -xzf data.tar.gz -C
+<app>/data`, po uprzednim zatrzymaniu usługi i zachowaniu bieżących danych.
+
+## Testy instalatora
 
 ```bash
-sudo apt-get install -y libpam0g
-sudo /opt/algen-pam/backend/.venv/bin/pip install python-pam==2.0.2
-sudo systemctl restart algen-pam
+bash -n install.sh
+shellcheck -S warning install.sh
+bash tests/install_smoke.sh
+bash tests/install_integration.sh
 ```
 
-Aktualny instalator wykonuje te kroki automatycznie i nie konczy update, dopoki
-PAM, systemd oraz `/api/health` nie przejda walidacji.
-
-### Python starszy niz 3.12
-
-Instalator ostrzega, jezeli wykryje starsza wersje. Projekt dokumentuje Python
-3.12 jako zalecany runtime. Na starszej dystrybucji zainstaluj Python 3.12 z
-pakietow dystrybucji, pyenv albo backports.
-
-### Port aplikacji albo bramy SSH jest zajety
-
-Instalator sprawdza port HTTP (domyslnie `8080`) oraz port bramy SSH (domyslnie
-`2222`) przed zapisaniem konfiguracji. W trybie interaktywnym proponuje najblizszy
-wolny port i pozwala wpisac inny. W trybie cichym z `--yes` automatycznie wybiera
-zaproponowany wolny port. Porty mozna tez wskazac jawnie:
-
-```bash
-./install.sh --port 8081 --gateway-port 2223
-```
-
-Wybrane wartosci sa zapisywane w konfiguracji i uzywane przez wrapper, usluge
-systemd oraz skrot pulpitu. Przy recznym uruchamianiu nadal mozna jednorazowo
-nadpisac port HTTP: `ALGEN_PAM_PORT=8081 algen-pam`.
-
-### Usluga uzytkownika nie startuje po restarcie
-
-Dla uslug `systemctl --user` moze byc potrzebne linger:
-
-```bash
-loginctl enable-linger "$USER"
-```
-
-### Aplikacja startuje, ale nie widac frontendu
-
-Sprawdz, czy katalog `frontend` istnieje w katalogu instalacji oraz czy aplikacja
-jest uruchamiana z wrappera `algen-pam`. Backend zaklada strukture repozytorium:
-
-```text
-backend/app/main.py
-frontend/index.html
-```
+CI wykonuje kontrolę składni, ShellCheck oraz pełny cykl instalacja–update–health
+check–deinstalacja na Ubuntu z Pythonem 3.12.

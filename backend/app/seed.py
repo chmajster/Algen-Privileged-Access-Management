@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.identity.sync import upsert_external_user
-from app.models import Alert, AuthEvent, MfaChallenge, Policy, PolicyRule, RiskEvent, Secret, SecretVersion, Server, StepUpSession, User, utcnow
+from app.models import Alert, AuthEvent, MfaChallenge, Policy, PolicyRule, RiskEvent, Secret, SecretVersion, Server, ServerGroup, ServerGroupMember, ServerGroupUserMembership, StepUpSession, User, utcnow
 from app.policy.default_rules import seed_default_policy_rules
 from app.security import hash_password
 
@@ -15,7 +15,7 @@ DEMO_SSH_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPamLiteDemoKey user@pam
 def seed_demo_data(db: Session) -> None:
     users = [
         (settings.pam_default_admin_user, settings.pam_default_admin_email, settings.pam_default_admin_password, "admin"),
-        ("approver", "approver@example.local", "approver123", "approver"),
+        ("approver", "approver@example.local", "approver123", "operator"),
         ("user", "user@example.local", "user123", "user"),
     ]
     for username, email, password, role in users:
@@ -160,4 +160,34 @@ def seed_demo_data(db: Session) -> None:
         db.add(MfaChallenge(user_id=admin.id, challenge_type="step_up", context="gateway_login", status="pending", expires_at=utcnow() + timedelta(minutes=5), metadata_json='{"demo": true}'))
     if demo_user and not db.query(StepUpSession).filter(StepUpSession.context == "demo_step_up").first():
         db.add(StepUpSession(user_id=demo_user.id, context="demo_step_up", valid_until=utcnow() + timedelta(minutes=15)))
+    db.commit()
+    from app.rbac import seed_access_control
+
+    seed_access_control(db)
+    # Demo-only security scopes. LDAP/OIDC groups remain identity claims and
+    # are intentionally not reused as PAM authorization groups.
+    demo_groups = {}
+    for name, environment in (("Production", "prod"), ("Development", "dev")):
+        group = db.query(ServerGroup).filter(ServerGroup.name == name).first()
+        if not group:
+            group = ServerGroup(name=name, description=f"Demonstration {environment} scope", environment=environment, enabled=True)
+            db.add(group)
+            db.flush()
+        demo_groups[name] = group
+    development = demo_groups["Development"]
+    development.require_reason = False
+    development.min_reason_length = 0
+    development.require_approval = False
+    development.allow_auto_grant = True
+    development.allowed_access_types = "ssh_only,limited_sudo,full_sudo"
+    development.max_grant_minutes = 480
+    development.allowed_durations = "15,30,60,120,240,480"
+    development.max_concurrent_grants = 100
+    development.max_active_sessions = 100
+    if demo_server and not db.query(ServerGroupMember).filter_by(server_group_id=demo_groups["Development"].id, server_id=demo_server.id).first():
+        db.add(ServerGroupMember(server_group_id=demo_groups["Development"].id, server_id=demo_server.id, created_by_id=admin.id if admin else None))
+    for username in ("approver", "user", "ldap_user", "oidc_user"):
+        subject = db.query(User).filter(User.username == username).first()
+        if subject and not db.query(ServerGroupUserMembership).filter_by(server_group_id=demo_groups["Development"].id, user_id=subject.id).first():
+            db.add(ServerGroupUserMembership(server_group_id=demo_groups["Development"].id, user_id=subject.id, group_role="operator" if subject.role == "operator" else "user", created_by_id=admin.id if admin else None))
     db.commit()

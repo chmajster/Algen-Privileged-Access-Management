@@ -22,13 +22,16 @@ Bezposrednia instalacja z repozytorium
 curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash
 ```
 
-Instalator automatycznie korzysta z `/dev/tty`, dlatego kreator interaktywny
-dziala rowniez wtedy, gdy skrypt jest przekazywany do Bash przez potok. Instalacja
-bez pytan nadal jest dostepna przez `bash -s -- --silent --yes`.
+Instalator korzysta z `/dev/tty`, dlatego kreator interaktywny dziala rowniez,
+gdy skrypt jest przekazywany do Bash przez potok. Anulowanie okna TUI albo brak
+odpowiedzi zawsze przerywa operacje; instalator nigdy nie uruchamia aktualizacji
+na podstawie timeoutu. Instalacja bez pytan jest dostepna przez
+`bash -s -- --silent --yes`.
 Domyslnie wykonywana jest instalacja systemowa w `/opt/algen-pam`; wariant lokalny
 dla biezacego uzytkownika wymaga opcji `--user`.
-Instalator nie korzysta z `git clone`: pobiera najnowsze archiwum `tar.gz` brancha
-`main`, weryfikuje je i dopiero wtedy instaluje lub aktualizuje pliki aplikacji.
+Z repozytorium HTTPS instalator pobiera i weryfikuje archiwum wybranego brancha
+lub taga, więc Git nie jest wymagany. Adres SSH korzysta z jawnego `git fetch` i
+checkoutu wskazanej rewizji. Katalog `.git` nie trafia do instalacji.
 
 Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
 instalacji CLI:
@@ -39,18 +42,30 @@ instalacji CLI:
 ./install.sh --silent --yes --system --service --install-dir /opt/algen-pam
 ```
 
-Instalator sprawdza, czy port HTTP `8080` i port bramy SSH `2222` sa wolne. Przy
-konflikcie proponuje inne porty (albo wybiera je automatycznie w trybie
-`--silent --yes`). Wlasne wartosci ustawisz przez `--port` i `--gateway-port`.
+Instalator sprawdza port HTTP `8080` i port bramy SSH `2222`. Konflikt w trybie
+silent jest bledem; automatyczne wyszukanie wolnego portu wymaga jawnej opcji
+`--auto-port`. Podczas aktualizacji zachowywane sa porty istniejacej instancji.
 Po instalacji uruchamia test `/api/health`. Aplikacja nasluchuje domyslnie na
 `0.0.0.0`, dlatego jest dostepna przez wszystkie adresy IP serwera, na przyklad
 `http://192.168.1.10:8080/` (o ile pozwala na to firewall).
 
-Ponowne uruchomienie instalatora wykrywa istniejaca instalacje i pokazuje menu
-aktualizacji, reinstalacji, kopii konfiguracji oraz usuwania. Bez wyboru po
-5 sekundach automatycznie rozpoczyna sie aktualizacja z kopia konfiguracji.
-Po aktualizacji istniejaca usluga systemd jest ponownie wlaczana i uruchamiana;
-instalator sprawdza jej stan `enabled`, `active` oraz endpoint `/api/health`.
+Ponowne uruchomienie interaktywne pokazuje menu aktualizacji, reinstalacji,
+backupu i usuwania oraz wymaga jawnego wyboru. Aktualizacja jest budowana w
+katalogu stagingowym, a po przelaczeniu wydania przechodzi `/api/health`;
+niepowodzenie uruchamia automatyczny rollback. Stan `active` i `enabled` uslugi
+jest zachowywany. Haslo bootstrapu administratora nie pozostaje w `.env`.
+
+Najwazniejsze operacje:
+
+```bash
+./install.sh --silent --yes --user --no-service
+sudo ./install.sh --install --silent --yes --system --service
+sudo ./install.sh --update --system --yes
+./install.sh --reinstall --user --yes
+./install.sh --backup --user --yes
+./install.sh --remove-app --user --yes
+./install.sh --uninstall --user --yes
+```
 
 Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
 
@@ -591,6 +606,16 @@ Rekomendacje produkcyjne:
 - nie loguj haseł LDAP, tokenow OIDC, sekretow TOTP ani recovery codes,
 - wysylaj `auth_events`, `risk_events` i `audit_logs` do SIEM.
 
+## Wewnętrzne grupy dostępu i RBAC
+
+PAM posiada odrębny od LDAP/OIDC model RBAC, którego źródłem prawdy są `ServerGroup`, `ServerGroupMember` i `ServerGroupUserMembership`. Użytkownik i serwer mogą należeć do wielu grup, a każde członkostwo ma rolę (`group_admin`, `operator`, `user` albo `custom`), termin ważności i status. Globalna rola `approver` jest migrowana do `operator` i pozostaje akceptowana jako alias wejściowy.
+
+Backend filtruje serwery, requesty, granty, sesje, komendy, alerty, sekrety, audyt i eksporty przed zbudowaniem odpowiedzi. Globalny administrator omija zakres grup, natomiast dla pozostałych kont obowiązuje domyślna odmowa, zakres serwera wynikający z grupy i pierwszeństwo jawnego `deny`. Ograniczenia wielu grup są łączone najbardziej restrykcyjnie.
+
+Panel `Access Management` umożliwia zarządzanie grupami serwerów, członkami, rolami, indywidualnymi wyjątkami, polityką czasu/MFA/gateway/nagrywania oraz macierzą uprawnień. Formularze serwerów obsługują wiele grup i referencje do Secrets Vault; nigdy nie przyjmują materiału prywatnego klucza.
+
+Pełny opis modelu, algorytmu uprawnień, migracji, scenariuszy i endpointów znajduje się w [dokumentacji RBAC](docs/RBAC.md).
+
 ## Security Notes
 
 - Change `SECRET_KEY` before real deployment.
@@ -607,7 +632,7 @@ cd backend
 pytest
 ```
 
-The test suite covers login, role access control, request creation, approvals, automatic grants, self-approval blocking, scheduler expiry, audit logging, Linux username validation, mock executor behavior, session creation, command import, CSV export, and history deletion protection.
+The test suite additionally covers access-group CRUD, multi-group membership, expiration, explicit deny precedence, IDOR isolation, operator approval, MFA/gateway/duration constraints, automatic revocation, server validation, secret redaction, and idempotent legacy-group migration.
 
 Testy instalatora na Linuxie:
 

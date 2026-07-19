@@ -543,7 +543,7 @@ def test_ldap_and_oidc_mock_role_mapping(client):
     db = SessionLocal()
     try:
         assert db.query(User).filter(User.username == "ldap_user", User.auth_provider == "ldap").first()
-        assert db.query(User).filter(User.username == "oidc_test", User.role == "approver").first()
+        assert db.query(User).filter(User.username == "oidc_test", User.role == "operator").first()
     finally:
         db.close()
 

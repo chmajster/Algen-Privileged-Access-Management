@@ -16,7 +16,8 @@ const navItems = [
   ["dashboard", "Dashboard", "bi-speedometer2", "Privileged access overview", ["user", "approver", "admin"]],
   ["adminPanel", "Admin Panel", "bi-tools", "Application and policy management", ["admin"]],
   ["servers", "Servers", "bi-hdd-network", "Linux targets", ["user", "approver", "admin"]],
-  ["users", "Users", "bi-people", "Accounts and SSH keys", ["admin"]],
+  ["accessGroups", "Access Management", "bi-people-fill", "Server groups, memberships, roles, permissions, and access matrix", ["user", "approver", "operator", "admin"]],
+  ["users", "Users", "bi-people", "Accounts, groups, and effective access", ["approver", "operator", "admin"]],
   ["requests", "Access Requests", "bi-journal-check", "Requests and approvals", ["user", "approver", "admin"]],
   ["grants", "Active Access", "bi-key", "Current and historical grants", ["user", "approver", "admin"]],
   ["sessions", "Sessions", "bi-terminal", "SSH sessions and recordings", ["user", "approver", "admin"]],
@@ -27,7 +28,6 @@ const navItems = [
   ["policies", "Policies", "bi-sliders", "Access policy rules", ["admin"]],
   ["policyRules", "Policy Engine", "bi-shield-check", "Security policy engine rules", ["admin"]],
   ["policyTest", "Policy Test", "bi-clipboard-check", "Evaluate access and command risk", ["admin"]],
-  ["serverGroups", "Server Groups", "bi-collection", "Environment and criticality groups", ["admin"]],
   ["riskEvents", "Risk Events", "bi-activity", "Risk scoring timeline", ["user", "approver", "admin"]],
   ["alerts", "Alerts", "bi-exclamation-triangle", "Open security alerts", ["user", "approver", "admin"]],
   ["audit", "Audit Logs", "bi-clipboard-data", "Administrative audit trail", ["admin"]],
@@ -117,20 +117,26 @@ async function loadBaseData() {
     api("/api/settings"),
   ]);
   const [riskEvents, alerts] = await Promise.all([api("/api/risk-events"), api("/api/alerts")]);
-  let users = [], policies = [], audit = [], secrets = [], rotationJobs = [], policyRules = [], serverGroups = [], identityUsers = [], authEvents = [], mfaStatus = null, providers = [];
+  let users = [], policies = [], audit = [], secrets = [], rotationJobs = [], policyRules = [], serverGroups = [], identityUsers = [], authEvents = [], accessGroups = [], permissionTemplates = [], permissionCatalog = [], mfaStatus = null, providers = [];
   providers = await api("/api/identity/providers").catch(() => []);
   mfaStatus = await api("/api/mfa/status").catch(() => null);
-  if (["approver", "admin"].includes(state.user.role)) {
+  [accessGroups, permissionTemplates, permissionCatalog] = await Promise.all([api("/api/server-groups"), api("/api/permission-templates"), api("/api/permissions")]);
+  serverGroups = accessGroups;
+  if (["approver", "operator", "admin"].includes(state.user.role)) {
     secrets = await api("/api/secrets");
+    users = await api("/api/users");
+    audit = await api("/api/audit-logs").catch(() => []);
   }
   if (state.user.role === "admin") {
-    [users, policies, audit, rotationJobs, policyRules, serverGroups, identityUsers, authEvents] = await Promise.all([api("/api/users"), api("/api/policies"), api("/api/audit-logs"), api("/api/secret-rotation/jobs"), api("/api/policy-rules"), api("/api/server-groups"), api("/api/identity/users"), api("/api/identity/auth-events")]);
+    [policies, rotationJobs, policyRules, identityUsers, authEvents] = await Promise.all([api("/api/policies"), api("/api/secret-rotation/jobs"), api("/api/policy-rules"), api("/api/identity/users"), api("/api/identity/auth-events")]);
   }
-  state.data = { servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings, settings, users, policies, audit, secrets, rotationJobs, policyRules, riskEvents, alerts, serverGroups, identityUsers, authEvents, mfaStatus, providers };
+  state.data = { servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings, settings, users, policies, audit, secrets, rotationJobs, policyRules, riskEvents, alerts, serverGroups, accessGroups, permissionTemplates, permissionCatalog, identityUsers, authEvents, mfaStatus, providers };
 }
 
 function allowed(item) {
-  return item[4].includes(state.user.role);
+  const role = state.user.role === "approver" ? "operator" : state.user.role;
+  const aliases = role === "operator" ? ["operator", "approver"] : [role];
+  return aliases.some((value) => item[4].includes(value));
 }
 
 function renderNav() {
@@ -178,11 +184,31 @@ function filterBox(id, placeholder = "Filter") {
 function applyClientFilter(inputId, rowSelector) {
   const input = $(`#${inputId}`);
   if (!input) return;
-  input.addEventListener("input", () => {
-    document.querySelectorAll(rowSelector).forEach((row) => {
-      row.style.display = row.textContent.toLowerCase().includes(input.value.toLowerCase()) ? "" : "none";
-    });
+  const pageSize = 20;
+  let page = 0;
+  const controls = document.createElement("div");
+  controls.className = "btn-group ms-auto";
+  controls.innerHTML = `<button class="btn btn-outline-secondary btn-sm" type="button" data-page="prev">Previous</button><span class="btn btn-light btn-sm disabled page-label"></span><button class="btn btn-outline-secondary btn-sm" type="button" data-page="next">Next</button>`;
+  input.parentElement?.appendChild(controls);
+  const update = () => {
+    const rows = [...document.querySelectorAll(rowSelector)];
+    const matching = rows.filter((row) => row.textContent.toLowerCase().includes(input.value.toLowerCase()));
+    const pages = Math.max(1, Math.ceil(matching.length / pageSize));
+    page = Math.min(page, pages - 1);
+    rows.forEach((row) => { row.style.display = "none"; });
+    matching.slice(page * pageSize, (page + 1) * pageSize).forEach((row) => { row.style.display = ""; });
+    controls.querySelector(".page-label").textContent = `${matching.length ? page + 1 : 0}/${matching.length ? pages : 0} Â· ${matching.length}`;
+    controls.querySelector('[data-page="prev"]').disabled = page === 0;
+    controls.querySelector('[data-page="next"]').disabled = page >= pages - 1;
+  };
+  input.addEventListener("input", () => { page = 0; update(); });
+  controls.addEventListener("click", (event) => {
+    const direction = event.target.dataset.page;
+    if (direction === "prev") page--;
+    if (direction === "next") page++;
+    update();
   });
+  update();
 }
 
 function renderDashboard() {
@@ -290,8 +316,8 @@ function renderServers() {
       <button class="btn btn-primary ${canAdmin ? "" : "d-none"}" id="addServer"><i class="bi bi-plus-lg"></i> Add</button>
       <button class="btn btn-outline-primary" id="requestAccess"><i class="bi bi-key"></i> Request Access</button>
     </div>
-    ${table(["Host", "IP", "Env", "Criticality", "Group", "Owner", "SSH secret", "Gateway secret", "Rotation", "Direct", "Gateway", "Logging", "Recording", "Enabled", "Actions"], state.data.servers.map((s) => `
-      <tr class="filter-row"><td>${escapeHtml(s.hostname)}</td><td>${escapeHtml(s.ip_address)}:${s.ssh_port}</td><td>${escapeHtml(s.environment)}</td><td>${escapeHtml(s.criticality)}</td><td>${serverGroupName(s.server_group_id)}</td><td>${escapeHtml(s.owner)}</td>
+    ${table(["Host", "IP", "Env", "Criticality", "Groups", "Owner", "SSH secret", "Gateway secret", "Rotation", "Direct", "Gateway", "Logging", "Recording", "Enabled", "Actions"], state.data.servers.map((s) => `
+      <tr class="filter-row"><td>${escapeHtml(s.display_name || s.hostname)}<div class="small text-secondary">${escapeHtml(s.hostname)}</div></td><td>${escapeHtml(s.ip_address)}:${s.ssh_port}</td><td>${escapeHtml(s.environment)}</td><td>${escapeHtml(s.criticality)}</td><td>${(s.access_group_ids || []).map(serverGroupName).join(", ")}</td><td>${escapeHtml(s.owner)}</td>
       <td>${secretName(s.ssh_auth_secret_id || s.secret_ref_id)}</td><td>${secretName(s.gateway_secret_ref_id)}</td><td>${s.rotation_enabled ? "on" : "off"}</td><td>${s.direct_access_enabled ? "on" : "off"}</td><td>${s.gateway_enabled ? "on" : "off"}</td><td>${s.command_logging_enabled ? "on" : "off"}</td><td>${s.session_recording_enabled ? "on" : "off"}</td><td>${s.enabled ? "yes" : "no"}</td>
       <td class="text-nowrap">
         <button class="btn btn-sm btn-outline-primary" data-action="test-server" data-id="${s.id}" title="Test connection"><i class="bi bi-plug"></i></button>
@@ -315,18 +341,35 @@ function serverGroupName(id) {
 }
 
 function renderUsers() {
+  const canCreate = state.user.role === "admin";
   $("#content").innerHTML = `
-    <div class="toolbar">${filterBox("userFilter", "Filter users")}<button class="btn btn-primary" id="addUser"><i class="bi bi-person-plus"></i> Add</button></div>
-    ${table(["Username", "Email", "Role", "MFA", "Risk", "Active", "SSH key", "Actions"], state.data.users.map((u) => `
-      <tr class="filter-row"><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.email)}</td><td>${u.role}</td><td>${u.mfa_enabled ? "yes" : "no"}</td><td>${escapeHtml(u.risk_level)} (${u.last_risk_score || 0})</td><td>${u.is_active ? "yes" : "no"}</td><td>${u.ssh_public_key ? "set" : "missing"}</td>
-      <td><button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${u.id}" title="Edit"><i class="bi bi-pencil"></i></button>
-      <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${u.id}" title="Deactivate"><i class="bi bi-x-circle"></i></button></td></tr>`))}`;
+    <div class="toolbar">${filterBox("userFilter", "Filter users")}<button class="btn btn-primary ${canCreate ? "" : "d-none"}" id="addUser"><i class="bi bi-person-plus"></i> Add</button></div>
+    ${table(["Username", "Email", "Global role", "Access groups", "MFA", "Active grants", "Active sessions", "Status", "Actions"], state.data.users.map((u) => `
+      <tr class="filter-row"><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.email)}</td><td><span class="badge text-bg-secondary">${escapeHtml(u.role === "approver" ? "operator" : u.role)}</span></td><td class="wrap">${(u.access_groups || []).map((g) => `<span class="badge text-bg-light me-1">${escapeHtml(g.name)} · ${escapeHtml(g.role)}</span>`).join("") || "—"}</td><td>${u.mfa_enabled ? "enabled" : u.mfa_required ? "required" : "off"}</td><td>${u.active_grant_count || 0}</td><td>${u.active_session_count || 0}</td><td>${u.is_active ? badge("active") : badge("disabled")}</td>
+      <td><button class="btn btn-sm btn-outline-primary" data-action="effective-user" data-id="${u.id}" title="Effective permissions"><i class="bi bi-shield-check"></i></button>
+      <button class="btn btn-sm btn-outline-secondary ${canCreate ? "" : "d-none"}" data-action="edit-user" data-id="${u.id}" title="Edit"><i class="bi bi-pencil"></i></button>
+      <button class="btn btn-sm btn-outline-warning ${canCreate ? "" : "d-none"}" data-action="revoke-user-grants" data-id="${u.id}" title="Revoke all grants"><i class="bi bi-key-fill"></i></button>
+      <button class="btn btn-sm btn-outline-warning ${canCreate ? "" : "d-none"}" data-action="terminate-user-sessions" data-id="${u.id}" title="Terminate all sessions"><i class="bi bi-stop-circle"></i></button>
+      <button class="btn btn-sm btn-outline-danger ${canCreate ? "" : "d-none"}" data-action="delete-user" data-id="${u.id}" title="Deactivate"><i class="bi bi-x-circle"></i></button></td></tr>`))}`;
   applyClientFilter("userFilter", ".filter-row");
-  $("#addUser").onclick = () => openUserModal();
+  if (canCreate) $("#addUser").onclick = () => openUserModal();
+}
+
+const rbacPermissions = ["servers.view","servers.create","servers.edit","servers.delete","servers.test_connection","servers.assign_to_group","access.request","access.connect","access.connect_direct","access.connect_gateway","access.approve","access.reject","access.revoke","access.extend","access.limited_sudo","access.full_sudo","sessions.view_own","sessions.view_group","sessions.terminate","commands.view_own","commands.view_group","audit.view_group","audit.export","users.view_group","users.manage_group","groups.manage_members","groups.manage_servers","groups.manage_permissions","alerts.view","alerts.manage","secrets.use"];
+
+function renderAccessGroups() {
+  const canCreate = state.user.role === "admin";
+  const canManage = ["admin", "operator", "approver"].includes(state.user.role);
+  $("#content").innerHTML = `
+    <div class="toolbar">${filterBox("accessGroupFilter", "Filter access groups")}<button id="addAccessGroup" class="btn btn-primary ${canCreate ? "" : "d-none"}"><i class="bi bi-plus-lg"></i> Add group</button></div>
+    ${table(["Name", "Environment", "Users", "Servers", "Active grants", "Active sessions", "Controls", "Status", "Actions"], (state.data.accessGroups || []).map((g) => `
+      <tr class="filter-row"><td><strong>${escapeHtml(g.name)}</strong><div class="small text-secondary">${escapeHtml(g.description)}</div></td><td>${escapeHtml(g.environment)}</td><td>${g.user_count}</td><td>${g.server_count}</td><td>${g.active_grant_count}</td><td>${g.active_session_count}</td><td class="small">${[g.require_approval?"approval":"",g.require_mfa?"MFA":"",g.require_gateway?"gateway":"",g.require_session_recording?"recording":""].filter(Boolean).join(", ") || "standard"}</td><td>${badge(g.is_active ? "active" : "disabled")}</td><td class="text-nowrap"><button class="btn btn-sm btn-outline-secondary ${canManage ? "" : "d-none"}" data-action="edit-access-group" data-id="${g.id}" title="Members and policy"><i class="bi bi-pencil"></i></button> <button class="btn btn-sm btn-outline-primary ${canManage ? "" : "d-none"}" data-action="permissions-access-group" data-id="${g.id}" title="Permission matrix"><i class="bi bi-grid-3x3-gap"></i></button> <button class="btn btn-sm btn-outline-danger ${canCreate ? "" : "d-none"}" data-action="delete-access-group" data-id="${g.id}" title="Delete or deactivate"><i class="bi bi-x-circle"></i></button></td></tr>`))}`;
+  applyClientFilter("accessGroupFilter", ".filter-row");
+  if (canCreate) $("#addAccessGroup").onclick = () => openAccessGroupModal();
 }
 
 function renderRequests() {
-  const canApprove = ["approver", "admin"].includes(state.user.role);
+  const canApprove = ["approver", "operator", "admin"].includes(state.user.role);
   $("#content").innerHTML = `
     <div class="toolbar">${filterBox("requestFilter", "Filter requests")}<button class="btn btn-primary" id="newRequest"><i class="bi bi-plus-lg"></i> Request</button></div>
     ${table(["ID", "User", "Server", "Type", "Duration", "Risk", "Controls", "Reason", "Status", "Actions"], state.data.requests.map((r) => `
@@ -340,7 +383,7 @@ function renderRequests() {
 }
 
 function renderGrants() {
-  const canRevoke = ["approver", "admin"].includes(state.user.role);
+  const canRevoke = ["approver", "operator", "admin"].includes(state.user.role);
   $("#content").innerHTML = `
     <div class="toolbar">${filterBox("grantFilter", "Filter grants")}</div>
     ${table(["ID", "User", "Server", "Mode", "Linux user", "Type", "Risk", "Monitoring", "Connect", "Valid to", "Status", "Actions"], state.data.grants.map((g) => `
@@ -680,7 +723,7 @@ function renderSettings() {
 function render() {
   renderNav();
   setTitle();
-  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
+  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
   (views[state.view] || renderDashboard)();
 }
 
@@ -754,6 +797,7 @@ function openServerModal(server = {}) {
   modal(server.id ? "Edit Server" : "Add Server", `
     <div class="form-grid">
       <div><label class="form-label">Hostname</label><input id="serverHostname" class="form-control" value="${escapeHtml(server.hostname || "")}"></div>
+      <div><label class="form-label">Display name</label><input id="serverDisplayName" class="form-control" value="${escapeHtml(server.display_name || "")}"></div>
       <div><label class="form-label">IP address</label><input id="serverIp" class="form-control" value="${escapeHtml(server.ip_address || "")}"></div>
       <div><label class="form-label">SSH port</label><input id="serverPort" type="number" class="form-control" value="${server.ssh_port || 22}"></div>
       <div><label class="form-label">Environment</label><input id="serverEnv" class="form-control" value="${escapeHtml(server.environment || "dev")}"></div>
@@ -761,12 +805,11 @@ function openServerModal(server = {}) {
       <div><label class="form-label">Criticality</label><select id="serverCriticality" class="form-select">${["low", "medium", "high", "critical"].map((v) => `<option ${server.criticality === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div><label class="form-label">Risk level</label><select id="serverRisk" class="form-select">${["low", "medium", "high", "critical"].map((v) => `<option ${server.risk_level === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div><label class="form-label">Admin user</label><input id="serverAdmin" class="form-control" value="${escapeHtml(server.ssh_admin_user || "root")}"></div>
-      <div class="span-2"><label class="form-label">Private key path</label><input id="serverKeyPath" class="form-control" value="${escapeHtml(server.ssh_private_key_path || "")}"></div>
+      <div><label class="form-label">Authentication</label><select id="serverAuthType" class="form-select">${[["vault_secret","Vault secret"],["vault_key","Vault private key"],["agent","SSH agent"],["none","None"]].map(([value,label]) => `<option value="${value}" ${server.ssh_auth_type === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
       <div><label class="form-label">Gateway target user</label><input id="serverGatewayUser" class="form-control" value="${escapeHtml(server.gateway_target_user || "")}"></div>
-      <div><label class="form-label">Gateway key path</label><input id="serverGatewayKey" class="form-control" value="${escapeHtml(server.gateway_private_key_path || "")}"></div>
       <div><label class="form-label">SSH auth secret</label><select id="serverSshSecret" class="form-select">${secretOptions}</select></div>
       <div><label class="form-label">Gateway secret</label><select id="serverGatewaySecret" class="form-select">${secretOptions}</select></div>
-      <div><label class="form-label">Server group</label><select id="serverGroup" class="form-select"><option value="">None</option>${(state.data.serverGroups || []).map((g) => `<option value="${g.id}" ${server.server_group_id === g.id ? "selected" : ""}>${escapeHtml(g.name)}</option>`).join("")}</select></div>
+      <div class="span-2"><label class="form-label">Server groups</label><select id="serverAccessGroups" class="form-select" multiple size="5">${(state.data.accessGroups || []).map((g) => `<option value="${g.id}" ${(server.access_group_ids || []).includes(g.id) ? "selected" : ""}>${escapeHtml(g.name)} · ${escapeHtml(g.environment)}</option>`).join("")}</select><div class="form-text">Credentials and private keys must come from Secrets Vault; they are never entered here.</div></div>
       <div class="span-2"><label class="form-label">Description</label><textarea id="serverDescription" class="form-control">${escapeHtml(server.description || "")}</textarea></div>
       <div class="form-check"><input id="serverEnabled" class="form-check-input" type="checkbox" ${(server.enabled ?? true) ? "checked" : ""}><label class="form-check-label">Enabled</label></div>
       <div class="form-check"><input id="serverCmdLog" class="form-check-input" type="checkbox" ${(server.command_logging_enabled ?? true) ? "checked" : ""}><label class="form-check-label">Command logging</label></div>
@@ -778,7 +821,7 @@ function openServerModal(server = {}) {
       <div class="form-check"><input id="serverReqRecording" class="form-check-input" type="checkbox" ${server.require_session_recording ? "checked" : ""}><label class="form-check-label">Require recording</label></div>
       <div class="form-check"><input id="serverReqMfa" class="form-check-input" type="checkbox" ${server.require_mfa ? "checked" : ""}><label class="form-check-label">Require MFA</label></div>
     </div>`,
-    () => api(server.id ? `/api/servers/${server.id}` : "/api/servers", { method: server.id ? "PUT" : "POST", body: JSON.stringify({ hostname: formValue("serverHostname"), ip_address: formValue("serverIp"), ssh_port: formValue("serverPort"), environment: formValue("serverEnv"), owner: formValue("serverOwner"), description: formValue("serverDescription"), enabled: formValue("serverEnabled"), ssh_admin_user: formValue("serverAdmin"), ssh_private_key_path: formValue("serverKeyPath"), command_logging_enabled: formValue("serverCmdLog"), session_recording_enabled: formValue("serverRecording"), gateway_enabled: formValue("serverGateway"), gateway_target_user: formValue("serverGatewayUser"), gateway_auth_type: "key", gateway_private_key_path: formValue("serverGatewayKey"), direct_access_enabled: formValue("serverDirect"), ssh_auth_secret_id: Number(formValue("serverSshSecret")) || null, secret_ref_id: Number(formValue("serverSshSecret")) || null, gateway_secret_ref_id: Number(formValue("serverGatewaySecret")) || null, rotation_enabled: formValue("serverRotation"), risk_level: formValue("serverRisk"), criticality: formValue("serverCriticality"), server_group_id: Number(formValue("serverGroup")) || null, require_approval: formValue("serverReqApproval"), require_session_recording: formValue("serverReqRecording"), require_mfa: formValue("serverReqMfa") }) })
+    () => api(server.id ? `/api/servers/${server.id}` : "/api/servers", { method: server.id ? "PATCH" : "POST", body: JSON.stringify({ hostname: formValue("serverHostname"), display_name: formValue("serverDisplayName") || null, ip_address: formValue("serverIp"), ssh_port: formValue("serverPort"), environment: formValue("serverEnv"), owner: formValue("serverOwner"), description: formValue("serverDescription"), enabled: formValue("serverEnabled"), ssh_admin_user: formValue("serverAdmin"), ssh_auth_type: formValue("serverAuthType"), command_logging_enabled: formValue("serverCmdLog"), session_recording_enabled: formValue("serverRecording"), gateway_enabled: formValue("serverGateway"), gateway_target_user: formValue("serverGatewayUser"), gateway_auth_type: "key", direct_access_enabled: formValue("serverDirect"), ssh_auth_secret_id: Number(formValue("serverSshSecret")) || null, secret_ref_id: Number(formValue("serverSshSecret")) || null, gateway_secret_ref_id: Number(formValue("serverGatewaySecret")) || null, rotation_enabled: formValue("serverRotation"), risk_level: formValue("serverRisk"), criticality: formValue("serverCriticality"), access_group_ids: [...document.getElementById("serverAccessGroups").selectedOptions].map((item) => Number(item.value)), require_approval: formValue("serverReqApproval"), require_session_recording: formValue("serverReqRecording"), require_mfa: formValue("serverReqMfa") }) })
   );
   setTimeout(() => {
     if (server.ssh_auth_secret_id || server.secret_ref_id) $("#serverSshSecret").value = server.ssh_auth_secret_id || server.secret_ref_id;
@@ -791,7 +834,7 @@ function openUserModal(user = {}) {
     <div class="form-grid">
       <div><label class="form-label">Username</label><input id="userUsername" class="form-control" value="${escapeHtml(user.username || "")}" ${user.id ? "disabled" : ""}></div>
       <div><label class="form-label">Email</label><input id="userEmail" class="form-control" value="${escapeHtml(user.email || "")}"></div>
-      <div><label class="form-label">Role</label><select id="userRole" class="form-select">${["user", "approver", "admin"].map((r) => `<option ${user.role === r ? "selected" : ""}>${r}</option>`).join("")}</select></div>
+      <div><label class="form-label">Role</label><select id="userRole" class="form-select">${["user", "operator", "admin"].map((r) => `<option ${(user.role === r || (user.role === "approver" && r === "operator")) ? "selected" : ""}>${r}</option>`).join("")}</select></div>
       <div><label class="form-label">Password</label><input id="userPassword" class="form-control" type="password"></div>
       <div><label class="form-label">Risk level</label><select id="userRisk" class="form-select">${["low", "medium", "high", "critical"].map((r) => `<option ${user.risk_level === r ? "selected" : ""}>${r}</option>`).join("")}</select></div>
       <div class="span-2"><label class="form-label">SSH public key</label><textarea id="userSshKey" class="form-control" rows="3">${escapeHtml(user.ssh_public_key || "")}</textarea></div>
@@ -870,6 +913,111 @@ function openServerGroupModal(group = {}) {
   );
 }
 
+async function openAccessGroupModal(group = {}) {
+  const [members, assignedServers, groupPermissions] = group.id ? await Promise.all([api(`/api/access-groups/${group.id}/users`).catch(() => []), api(`/api/access-groups/${group.id}/servers`).catch(() => []), api(`/api/access-groups/${group.id}/permissions`).catch(() => [])]) : [[], [], []];
+  const memberIds = new Set(members.map((item) => item.user_id));
+  const serverIds = new Set(assignedServers.map((item) => item.id));
+  const userOptions = (state.data.users || []).map((u) => `<option value="${u.id}" ${memberIds.has(u.id) ? "selected" : ""}>${escapeHtml(u.username)} · ${escapeHtml(u.email)}</option>`).join("");
+  const serverOptions = (state.data.servers || []).map((s) => `<option value="${s.id}" ${serverIds.has(s.id) ? "selected" : ""}>${escapeHtml(s.hostname)} · ${escapeHtml(s.environment)}</option>`).join("");
+  const templateOptions = [`<option value="">Role defaults</option>`, ...(state.data.permissionTemplates || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`)].join("");
+  const copyOptions = `<option value="">Do not copy</option>${(state.data.accessGroups || []).filter((item) => item.id !== group.id).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}`;
+  const relatedGrants = (state.data.grants || []).filter((item) => serverIds.has(item.server_id));
+  const relatedSessions = (state.data.sessions || []).filter((item) => serverIds.has(item.server_id));
+  const relatedAudit = (state.data.audit || []).filter((item) => serverIds.has(item.server_id) || String(item.metadata_json || "").includes(`\"group_id\": ${group.id}`));
+  modal(group.id ? `Access group: ${group.name}` : "New access group", `
+    <ul class="nav nav-tabs mb-3 flex-nowrap overflow-auto">${[["summary","Summary"],["users","Users"],["servers","Servers"],["policy","Access policy"],["permissions","Permissions"],["grants","Active grants"],["sessions","Sessions"],["audit","Audit log"]].map(([id,label], index) => `<li class="nav-item"><button type="button" class="nav-link ag-tab ${index ? "" : "active"}" data-ag-tab="${id}">${label}</button></li>`).join("")}</ul>
+    <div class="form-grid">
+      <div><label class="form-label">Name</label><input id="agName" class="form-control" value="${escapeHtml(group.name || "")}"></div>
+      <div><label class="form-label">Environment</label><input id="agEnvironment" class="form-control" value="${escapeHtml(group.environment || "")}"></div>
+      <div class="span-2"><label class="form-label">Description</label><textarea id="agDescription" class="form-control">${escapeHtml(group.description || "")}</textarea></div>
+      <div><label class="form-label">Allowed access types</label><input id="agTypes" class="form-control" value="${escapeHtml(group.allowed_access_types || "ssh_only")}" placeholder="ssh_only,limited_sudo"></div>
+      <div><label class="form-label">Allowed durations</label><input id="agDurations" class="form-control" value="${escapeHtml(group.allowed_durations || "30,60")}" placeholder="30,60,120"></div>
+      <div><label class="form-label">Maximum grant (minutes)</label><input id="agMaxGrant" type="number" class="form-control" value="${group.max_grant_minutes || 60}"></div>
+      <div><label class="form-label">Minimum reason length</label><input id="agReasonLength" type="number" class="form-control" value="${group.min_reason_length ?? 10}"></div>
+      <div><label class="form-label">Allowed hours (UTC)</label><input id="agHours" class="form-control" value="${escapeHtml(group.allowed_hours || "")}" placeholder="8-18"></div>
+      <div><label class="form-label">Allowed weekdays</label><input id="agWeekdays" class="form-control" value="${escapeHtml(group.allowed_weekdays || "0,1,2,3,4,5,6")}"></div>
+      <div><label class="form-label">Max concurrent grants</label><input id="agMaxGrants" type="number" class="form-control" value="${group.max_concurrent_grants || 1}"></div>
+      <div><label class="form-label">Max active sessions</label><input id="agMaxSessions" type="number" class="form-control" value="${group.max_active_sessions || 1}"></div>
+      <div><label class="form-label">Copy policy and permissions from</label><select id="agCopySource" class="form-select">${copyOptions}</select></div>
+      <div class="form-check"><input id="agActive" class="form-check-input" type="checkbox" ${(group.is_active ?? true) ? "checked" : ""}><label class="form-check-label">Active</label></div>
+      <div class="form-check"><input id="agApproval" class="form-check-input" type="checkbox" ${(group.require_approval ?? true) ? "checked" : ""}><label class="form-check-label">Require approval</label></div>
+      <div class="form-check"><input id="agMfa" class="form-check-input" type="checkbox" ${group.require_mfa ? "checked" : ""}><label class="form-check-label">Require MFA</label></div>
+      <div class="form-check"><input id="agGateway" class="form-check-input" type="checkbox" ${group.require_gateway ? "checked" : ""}><label class="form-check-label">Require gateway</label></div>
+      <div class="form-check"><input id="agDenyDirect" class="form-check-input" type="checkbox" ${group.deny_direct_ssh ? "checked" : ""}><label class="form-check-label">Deny direct SSH</label></div>
+      <div class="form-check"><input id="agCommands" class="form-check-input" type="checkbox" ${(group.require_command_logging ?? true) ? "checked" : ""}><label class="form-check-label">Require command logging</label></div>
+      <div class="form-check"><input id="agRecording" class="form-check-input" type="checkbox" ${group.require_session_recording ? "checked" : ""}><label class="form-check-label">Require recording</label></div>
+      <div class="span-2 border-top pt-3"><label class="form-label">Users</label><select id="agUsers" class="form-select" multiple size="7">${userOptions}</select></div>
+      <div><label class="form-label">Role for selected users</label><select id="agUserRole" class="form-select">${["user","operator","custom","auditor","group_admin"].map((role) => `<option>${role}</option>`).join("")}</select></div>
+      <div><label class="form-label">Permission template</label><select id="agTemplate" class="form-select">${templateOptions}</select></div>
+      <div class="span-2"><label class="form-label">Servers</label><select id="agServers" class="form-select" multiple size="7">${serverOptions}</select></div>
+    </div>
+    <div id="agRelatedPanels" class="d-none">
+      <section data-ag-panel="permissions">${table(["Permission","Effect","Scope"], groupPermissions.map((item) => `<tr><td><code>${escapeHtml(item.permission)}</code></td><td>${badge(item.effect)}</td><td>${item.membership_id ? `membership #${item.membership_id}` : "group"}</td></tr>`))}</section>
+      <section data-ag-panel="grants">${table(["ID","User","Server","Type","Valid to","Status"], relatedGrants.map((item) => `<tr><td>#${item.id}</td><td>${escapeHtml(item.username)}</td><td>${escapeHtml(item.server_hostname)}</td><td>${escapeHtml(item.access_type)}</td><td>${fmt(item.valid_to)}</td><td>${badge(item.status)}</td></tr>`))}</section>
+      <section data-ag-panel="sessions">${table(["ID","User","Server","Started","Status"], relatedSessions.map((item) => `<tr><td>#${item.id}</td><td>${escapeHtml(item.username)}</td><td>${escapeHtml(item.server_hostname)}</td><td>${fmt(item.started_at)}</td><td>${badge(item.status)}</td></tr>`))}</section>
+      <section data-ag-panel="audit">${table(["Time","Action","Actor","Message"], relatedAudit.slice(0,100).map((item) => `<tr><td>${fmt(item.created_at)}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.username)}</td><td>${escapeHtml(item.message)}</td></tr>`))}</section>
+    </div>`, async () => {
+      const payload = {name:formValue("agName"),description:formValue("agDescription")||null,environment:formValue("agEnvironment")||null,is_active:formValue("agActive"),allowed_access_types:formValue("agTypes"),allowed_durations:formValue("agDurations"),max_grant_minutes:formValue("agMaxGrant"),min_reason_length:formValue("agReasonLength"),allowed_hours:formValue("agHours")||null,allowed_weekdays:formValue("agWeekdays"),max_concurrent_grants:formValue("agMaxGrants"),max_active_sessions:formValue("agMaxSessions"),require_approval:formValue("agApproval"),require_mfa:formValue("agMfa"),require_gateway:formValue("agGateway"),deny_direct_ssh:formValue("agDenyDirect"),require_command_logging:formValue("agCommands"),require_session_recording:formValue("agRecording")};
+      const saved = await api(group.id ? `/api/access-groups/${group.id}` : "/api/access-groups", {method:group.id?"PATCH":"POST",body:JSON.stringify(payload)});
+      const copySource = Number(formValue("agCopySource")) || null;
+      if (copySource) await api(`/api/access-groups/${saved.id}/copy-settings/${copySource}`, {method:"POST"});
+      const selectedUsers = [...document.getElementById("agUsers").selectedOptions].map((item) => Number(item.value));
+      const selectedServers = [...document.getElementById("agServers").selectedOptions].map((item) => Number(item.value));
+      const removedUsers = members.filter((item) => !selectedUsers.includes(item.user_id));
+      for (const item of removedUsers) await api(`/api/access-groups/${saved.id}/users/${item.user_id}`, {method:"DELETE"});
+      if (selectedUsers.length) await api(`/api/access-groups/${saved.id}/users`, {method:"POST",body:JSON.stringify({user_ids:selectedUsers,group_role:formValue("agUserRole"),permission_template_id:Number(formValue("agTemplate"))||null,is_active:true})});
+      for (const item of assignedServers) if (!selectedServers.includes(item.id)) await api(`/api/access-groups/${saved.id}/servers/${item.id}`, {method:"DELETE"});
+      if (selectedServers.length) await api(`/api/access-groups/${saved.id}/servers`, {method:"POST",body:JSON.stringify({server_ids:selectedServers})});
+    });
+  const fieldsByTab = {
+    users: new Set(["agUsers", "agUserRole", "agTemplate"]),
+    servers: new Set(["agServers"]),
+    summary: new Set(["agName", "agEnvironment", "agDescription", "agActive"]),
+  };
+  const formChildren = [...document.querySelectorAll("#entityModalBody .form-grid > div")];
+  const switchTab = (tab) => {
+    document.querySelectorAll(".ag-tab").forEach((item) => item.classList.toggle("active", item.dataset.agTab === tab));
+    const isRelated = ["permissions", "grants", "sessions", "audit"].includes(tab);
+    $("#agRelatedPanels").classList.toggle("d-none", !isRelated);
+    document.querySelectorAll("[data-ag-panel]").forEach((item) => item.classList.toggle("d-none", item.dataset.agPanel !== tab));
+    formChildren.forEach((item) => {
+      const inputId = item.querySelector("input,select,textarea")?.id;
+      const visible = !isRelated && (tab === "policy" ? ![...fieldsByTab.summary, ...fieldsByTab.users, ...fieldsByTab.servers].includes(inputId) : fieldsByTab[tab]?.has(inputId));
+      item.classList.toggle("d-none", !visible);
+    });
+  };
+  document.querySelectorAll(".ag-tab").forEach((item) => item.addEventListener("click", () => switchTab(item.dataset.agTab)));
+  switchTab("summary");
+}
+
+async function openPermissionMatrix(group) {
+  const [rows, members] = await Promise.all([api(`/api/server-groups/${group.id}/permissions`), api(`/api/server-groups/${group.id}/users`)]);
+  const effects = Object.fromEntries(rows.map((row) => [row.permission, row.effect]));
+  const matrixPermissions = (state.data.permissionCatalog || []).map((item) => item.code);
+  const memberData = await Promise.all(members.map(async (member) => {
+    const [overrides, effective] = await Promise.all([api(`/api/server-groups/${group.id}/users/${member.user_id}/permissions`), api(`/api/server-groups/${group.id}/users/${member.user_id}/effective-permissions`)]);
+    return {member, overrides:Object.fromEntries(overrides.map((row) => [row.permission,row.effect])), effective:Object.fromEntries(effective.map((row) => [row.permission,row]))};
+  }));
+  const picker = (permission, effect, scope, userId="") => `<select class="form-select form-select-sm permission-effect" data-permission="${permission}" data-scope="${scope}" data-user-id="${userId}"><option value="">Inherited</option><option value="allow" ${effect==="allow"?"selected":""}>Allow</option><option value="deny" ${effect==="deny"?"selected":""}>Deny</option></select>`;
+  const head = `<th>Permission</th><th>Group</th>${memberData.map(({member}) => `<th>${escapeHtml(member.username)}<div class="small text-secondary">${escapeHtml(member.group_role)}</div></th>`).join("")}`;
+  const body = matrixPermissions.map((permission) => `<tr><td><code>${escapeHtml(permission)}</code></td><td>${picker(permission,effects[permission],"group")}</td>${memberData.map(({member,overrides,effective}) => `<td>${picker(permission,overrides[permission],"user",member.user_id)}<div class="small ${effective[permission]?.effect === "allow" ? "text-success" : "text-danger"}">${effective[permission]?.effect || "deny"} · ${escapeHtml(effective[permission]?.source || "default_deny")}</div></td>`).join("")}</tr>`).join("");
+  modal(`Access matrix: ${group.name}`, `<div class="alert alert-info">Deny always wins. Inherited shows the effective role/group result and its source.</div><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`, async () => {
+    const payload = [...document.querySelectorAll('.permission-effect[data-scope="group"]')].filter((item) => item.value).map((item) => ({permission:item.dataset.permission,effect:item.value}));
+    await api(`/api/server-groups/${group.id}/permissions`, {method:"PUT",body:JSON.stringify(payload)});
+    for (const {member} of memberData) {
+      const overrides = [...document.querySelectorAll(`.permission-effect[data-user-id="${member.user_id}"]`)].filter((item) => item.value).map((item) => ({permission:item.dataset.permission,effect:item.value}));
+      await api(`/api/server-groups/${group.id}/users/${member.user_id}/permissions`, {method:"PUT",body:JSON.stringify(overrides)});
+    }
+  });
+}
+
+async function showEffectivePermissions(user) {
+  const rows = await api(`/api/users/${user.id}/effective-permissions`);
+  modal(`Effective permissions: ${user.username}`, table(["Permission","Decision","Source group","Group role","Source","Reason"], rows.map((item) => `<tr><td><code>${escapeHtml(item.permission)}</code></td><td>${badge(item.effect)}</td><td>${escapeHtml(item.group_name)}</td><td>${escapeHtml(item.group_role)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.reason)}</td></tr>`)), async () => {});
+  $("#entityModalSave").classList.add("d-none");
+  document.getElementById("entityModal").addEventListener("hidden.bs.modal", () => $("#entityModalSave").classList.remove("d-none"), {once:true});
+}
+
 function openSecretModal(secret = {}) {
   modal(secret.id ? "Edit Secret Metadata" : "Create Secret", `
     <div class="form-grid">
@@ -939,9 +1087,31 @@ document.body.addEventListener("click", async (event) => {
     if (action === "test-server") await api(`/api/servers/${id}/test-connection`, { method: "POST" });
     if (action === "edit-server") openServerModal(state.data.servers.find((x) => x.id === id));
     if (action === "rotate-server-key") await api(`/api/secret-rotation/servers/${id}/rotate-ssh-key`, { method: "POST" });
-    if (action === "delete-server") await api(`/api/servers/${id}`, { method: "DELETE" });
+    if (action === "delete-server") {
+      if (!confirm("Deactivate this server?")) return;
+      await api(`/api/servers/${id}`, { method: "DELETE" });
+    }
     if (action === "edit-user") openUserModal(state.data.users.find((x) => x.id === id));
-    if (action === "delete-user") await api(`/api/users/${id}`, { method: "DELETE" });
+    if (action === "delete-user") {
+      if (!confirm("Deactivate this user?")) return;
+      await api(`/api/users/${id}`, { method: "DELETE" });
+    }
+    if (action === "revoke-user-grants") {
+      if (!confirm("Revoke every active grant for this user?")) return;
+      await api(`/api/users/${id}/revoke-grants`, {method:"POST"});
+    }
+    if (action === "terminate-user-sessions") {
+      if (!confirm("Terminate every active session for this user?")) return;
+      await api(`/api/users/${id}/terminate-sessions`, {method:"POST"});
+    }
+    if (action === "effective-user") { await showEffectivePermissions(state.data.users.find((x) => x.id === id)); return; }
+    if (action === "edit-access-group") { await openAccessGroupModal(state.data.accessGroups.find((x) => x.id === id)); return; }
+    if (action === "permissions-access-group") { await openPermissionMatrix(state.data.accessGroups.find((x) => x.id === id)); return; }
+    if (action === "delete-access-group") {
+      const group = state.data.accessGroups.find((x) => x.id === id);
+      if (!confirm(`Delete or deactivate access group "${group.name}"?`)) return;
+      await api(`/api/access-groups/${id}`, {method:"DELETE"});
+    }
     if (action === "approve-request") await api(`/api/access-requests/${id}/approve`, { method: "POST", body: JSON.stringify({ approver_comment: "Approved from UI" }) });
     if (action === "reject-request") await api(`/api/access-requests/${id}/reject`, { method: "POST", body: JSON.stringify({ approver_comment: "Rejected from UI" }) });
     if (action === "import-grant-logs") await api(`/api/access-grants/${id}/import-logs`, { method: "POST" });

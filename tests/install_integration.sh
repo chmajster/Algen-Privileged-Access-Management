@@ -62,8 +62,8 @@ bash "$INSTALLER" "${INSTALL_ARGS[@]}"
 [[ -f "$SERVICE_FILE" ]]
 [[ -f "$PID_FILE" ]]
 [[ ! -e "$INSTALL_DIR/.git" ]]
-grep -q '^ALGEN_PAM_HOST=0.0.0.0$' "$CONFIG_FILE"
-APP_PORT="$(sed -n 's/^ALGEN_PAM_PORT=//p' "$CONFIG_FILE" | tail -n 1)"
+grep -Eq '^ALGEN_PAM_HOST="?0\.0\.0\.0"?$' "$CONFIG_FILE"
+APP_PORT="$(sed -n 's/^ALGEN_PAM_PORT=//p' "$CONFIG_FILE" | tail -n 1 | tr -d '"')"
 curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 systemctl --user is-active --quiet algen-pam.service
 systemctl --user is-enabled --quiet algen-pam.service
@@ -85,8 +85,16 @@ systemctl --user is-enabled --quiet algen-pam.service
 curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 grep -q '^# integration-config-sentinel$' "$CONFIG_FILE"
 grep -q '^integration-data-sentinel$' "$INSTALL_DIR/data/integration-sentinel"
-find "$TEST_HOME/.config/algen-pam/backups" -type f -name '.env.*.bak' -print -quit | grep . >/dev/null
+! grep -q '^PAM_DEFAULT_ADMIN_PASSWORD=' "$CONFIG_FILE"
+[[ "$(stat -c '%a' "$CONFIG_FILE")" == 600 ]]
+[[ "$(stat -c '%a' "$INSTALL_DIR/data")" == 700 ]]
+grep -q '^app=algen-pam$' "$INSTALL_DIR/.algen-pam-install"
+grep -Fqx "install_dir=$INSTALL_DIR" "$INSTALL_DIR/.algen-pam-install"
+find "$TEST_HOME/.config/algen-pam/backups" -type f -name env -print -quit | grep . >/dev/null
 grep -q "ExecStart=.*--host 0.0.0.0 --port $APP_PORT" "$SERVICE_FILE"
+grep -q '^NoNewPrivileges=true$' "$SERVICE_FILE"
+grep -q '^ProtectSystem=strict$' "$SERVICE_FILE"
+grep -q '^UMask=0077$' "$SERVICE_FILE"
 
 if command -v systemd-analyze >/dev/null 2>&1; then
   systemd-analyze verify "$SERVICE_FILE"

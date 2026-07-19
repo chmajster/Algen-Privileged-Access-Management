@@ -29,12 +29,21 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
-    _ensure_sqlite_columns()
+    _ensure_legacy_columns()
+    from app.rbac import seed_access_control
+
+    with SessionLocal() as db:
+        seed_access_control(db)
 
 
-def _ensure_sqlite_columns() -> None:
-    if not DATABASE_URL.startswith("sqlite"):
-        return
+def _ensure_legacy_columns() -> None:
+    """Idempotently extend installations created before schema migrations.
+
+    New tables are handled by metadata.create_all; this conservative helper
+    only adds missing nullable/defaulted columns and works on SQLite and
+    PostgreSQL without dropping or rewriting existing data.
+    """
+    is_postgres = engine.dialect.name == "postgresql"
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
 
@@ -44,13 +53,47 @@ def _ensure_sqlite_columns() -> None:
         columns = {column["name"] for column in inspector.get_columns(table)}
         for name, definition in definitions.items():
             if name not in columns:
+                if is_postgres:
+                    definition = definition.replace("DEFAULT 1", "DEFAULT TRUE").replace("DEFAULT 0", "DEFAULT FALSE").replace("DATETIME", "TIMESTAMP WITH TIME ZONE")
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
 
     with engine.begin() as conn:
         add_missing(
             conn,
+            "server_groups",
+            {
+                "enabled": "BOOLEAN DEFAULT 1 NOT NULL",
+                "is_system": "BOOLEAN DEFAULT 0 NOT NULL",
+                "created_by_id": "INTEGER",
+                "updated_by_id": "INTEGER",
+                "allowed_access_types": "VARCHAR(128) DEFAULT 'ssh_only' NOT NULL",
+                "max_grant_minutes": "INTEGER DEFAULT 60 NOT NULL",
+                "allowed_durations": "VARCHAR(128) DEFAULT '30,60' NOT NULL",
+                "require_approval": "BOOLEAN DEFAULT 1 NOT NULL",
+                "require_mfa": "BOOLEAN DEFAULT 0 NOT NULL",
+                "require_gateway": "BOOLEAN DEFAULT 0 NOT NULL",
+                "deny_direct_ssh": "BOOLEAN DEFAULT 0 NOT NULL",
+                "require_command_logging": "BOOLEAN DEFAULT 1 NOT NULL",
+                "require_session_recording": "BOOLEAN DEFAULT 0 NOT NULL",
+                "allowed_hours": "VARCHAR(64)",
+                "allowed_weekdays": "VARCHAR(32) DEFAULT '0,1,2,3,4,5,6' NOT NULL",
+                "max_concurrent_grants": "INTEGER DEFAULT 1 NOT NULL",
+                "max_active_sessions": "INTEGER DEFAULT 1 NOT NULL",
+                "allow_self_extension": "BOOLEAN DEFAULT 0 NOT NULL",
+                "allow_auto_grant": "BOOLEAN DEFAULT 0 NOT NULL",
+                "require_reason": "BOOLEAN DEFAULT 1 NOT NULL",
+                "min_reason_length": "INTEGER DEFAULT 10 NOT NULL",
+                "revoke_on_membership_loss": "BOOLEAN DEFAULT 1 NOT NULL",
+                "terminate_sessions_on_membership_loss": "BOOLEAN DEFAULT 1 NOT NULL",
+            },
+        )
+        add_missing(conn, "server_group_members", {"created_by_id": "INTEGER"})
+        add_missing(
+            conn,
             "servers",
             {
+                "display_name": "VARCHAR(255)",
+                "ssh_auth_type": "VARCHAR(32) NOT NULL DEFAULT 'vault_secret'",
                 "gateway_enabled": "BOOLEAN DEFAULT 1 NOT NULL",
                 "gateway_target_user": "VARCHAR(64)",
                 "gateway_auth_type": "VARCHAR(32) DEFAULT 'key' NOT NULL",
@@ -160,6 +203,10 @@ def _ensure_sqlite_columns() -> None:
             {
                 "session_id": "INTEGER",
                 "metadata_json": "TEXT",
+                "user_agent": "VARCHAR(512)",
+                "object_type": "VARCHAR(64)",
+                "object_id": "VARCHAR(128)",
+                "result": "VARCHAR(32) NOT NULL DEFAULT 'success'",
             },
         )
         add_missing(
@@ -170,3 +217,11 @@ def _ensure_sqlite_columns() -> None:
                 "encrypted": "BOOLEAN DEFAULT 0 NOT NULL",
             },
         )
+        for index_name, table, columns in (
+            ("ix_server_group_members_group_server", "server_group_members", "server_group_id, server_id"),
+            ("ix_server_group_users_group_user", "server_group_user_memberships", "server_group_id, user_id"),
+            ("ix_user_group_permissions_scope", "user_group_permissions", "server_group_id, user_id, permission_id"),
+            ("ix_audit_logs_object", "audit_logs", "object_type, object_id"),
+        ):
+            if table in table_names:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({columns})"))

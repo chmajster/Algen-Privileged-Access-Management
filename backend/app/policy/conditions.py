@@ -28,7 +28,13 @@ def matches_condition(condition: dict, context: dict) -> bool:
     if criticality and criticality != context.get("criticality"):
         return False
     server_group = condition.get("server_group")
-    if server_group and server_group != context.get("server_group"):
+    if server_group and server_group not in context.get("server_group_names", [context.get("server_group")]):
+        return False
+    required_permission = condition.get("effective_permission")
+    if required_permission and required_permission not in context.get("effective_permissions", []):
+        return False
+    group_role = condition.get("group_role")
+    if group_role and group_role not in context.get("group_role", []):
         return False
     if condition.get("grant_missing") and context.get("has_grant"):
         return False

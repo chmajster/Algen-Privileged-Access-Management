@@ -13,6 +13,14 @@ from app.vault.rotation import rotate_secret_value, run_due_rotations
 scheduler = BackgroundScheduler(timezone="UTC")
 
 
+def _same_timezone(value, reference):
+    if value.tzinfo is None and reference.tzinfo is not None:
+        return value.replace(tzinfo=reference.tzinfo)
+    if value.tzinfo is not None and reference.tzinfo is None:
+        return value.replace(tzinfo=None)
+    return value
+
+
 def expire_due_grants(db: Session | None = None) -> int:
     owns_session = db is None
     db = db or SessionLocal()
@@ -56,15 +64,15 @@ def enforce_gateway_sessions(db: Session | None = None) -> int:
         for connection in connections:
             session = connection.session
             grant = connection.grant
-            session.duration_seconds = max(0, int((now - session.started_at).total_seconds()))
-            if grant.status != "active" or grant.valid_to <= now:
+            session.duration_seconds = max(0, int((now - _same_timezone(session.started_at, now)).total_seconds()))
+            if grant.status != "active" or _same_timezone(grant.valid_to, now) <= now:
                 finish_gateway_connection(db, connection, "grant_expired")
                 closed += 1
                 continue
             idle_seconds = session.idle_timeout_seconds or settings.pam_gateway_idle_timeout_seconds
             max_seconds = session.max_session_seconds or settings.pam_gateway_max_session_seconds
-            idle_for = (now - connection.updated_at).total_seconds()
-            running_for = (now - connection.started_at).total_seconds()
+            idle_for = (now - _same_timezone(connection.updated_at, now)).total_seconds()
+            running_for = (now - _same_timezone(connection.started_at, now)).total_seconds()
             if idle_seconds and idle_for > idle_seconds:
                 finish_gateway_connection(db, connection, "idle_timeout")
                 closed += 1

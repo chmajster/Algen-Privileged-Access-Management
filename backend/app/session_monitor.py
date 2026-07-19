@@ -194,7 +194,13 @@ def _finish_session(db: DBSession, session: Session, payload: dict[str, Any]) ->
     ended_at = _parse_timestamp(payload.get("timestamp"))
     session.ended_at = ended_at
     session.status = "closed"
-    session.duration_seconds = max(0, int((ended_at - session.started_at).total_seconds()))
+    started_at = session.started_at
+    # SQLite drops timezone metadata even for DateTime(timezone=True).
+    if started_at.tzinfo is None and ended_at.tzinfo is not None:
+        started_at = started_at.replace(tzinfo=ended_at.tzinfo)
+    elif started_at.tzinfo is not None and ended_at.tzinfo is None:
+        ended_at = ended_at.replace(tzinfo=started_at.tzinfo)
+    session.duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
     write_audit(
         db,
         "session_finished",

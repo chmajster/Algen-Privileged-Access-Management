@@ -52,8 +52,6 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
         write_audit(db, "auth.login_failed", f"Failed login for {payload.username}", source_ip=ip)
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid username or password")
-    user.failed_login_count = 0
-    user.locked_until = None
     write_auth_event(db, "login_attempt", user=user, provider=provider, success=True, source_ip=ip, user_agent=user_agent, message="Login credentials accepted")
     mfa_required = settings.pam_mfa_enabled and user.mfa_enabled and (user.mfa_required or (settings.pam_mfa_required_for_admin and user.role == "admin"))
     if mfa_required:
@@ -67,6 +65,8 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
             context="login",
             provider=provider,
         )
+    user.failed_login_count = 0
+    user.locked_until = None
     user.last_login_at = utcnow()
     write_auth_event(db, "login_success", user=user, provider=provider, success=True, source_ip=ip, user_agent=user_agent, message="Login successful")
     write_audit(db, "auth.login", f"{user.username} logged in", user_id=user.id, source_ip=source_ip(request))

@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
-from app.models import AccessGrant, Server, User, utcnow
+from app.models import AccessGrant, Server, Session as PamSession, User, utcnow
+from app.rbac import constraints_for_request, has_permission
 
 
 GATEWAY_USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,63}(?:\+[0-9]+)?$")
@@ -44,7 +45,16 @@ def active_gateway_grants(db: DBSession, user: User, requested_server_id: int | 
     )
     if requested_server_id:
         query = query.filter(AccessGrant.server_id == requested_server_id)
-    return query.order_by(AccessGrant.valid_to.asc()).all()
+    output = []
+    for grant in query.order_by(AccessGrant.valid_to.asc()).all():
+        if not has_permission(db, user, "access.connect", server_id=grant.server_id) or not has_permission(db, user, "access.connect_gateway", server_id=grant.server_id):
+            continue
+        constraints = constraints_for_request(db, user, grant.server_id)
+        active_sessions = db.query(PamSession).filter(PamSession.user_id == user.id, PamSession.server_id == grant.server_id, PamSession.status == "active").count()
+        if active_sessions >= constraints["max_active_sessions"]:
+            continue
+        output.append(grant)
+    return output
 
 
 def choose_gateway_grant(db: DBSession, user: User, requested_server_id: int | None = None) -> AccessGrant | None:

@@ -2,15 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session as DBSession
 
 from app import schemas
-from app.auth import require_roles, source_ip
+from app.auth import get_current_user, require_roles, source_ip
 from app.database import get_db
-from app.models import Secret, SecretAccessLog, SecretVersion, User
+from app.models import Secret, SecretAccessLog, SecretVersion, Server, User
 from app.mfa.step_up import require_step_up
 from app.vault.audit import write_secret_access_log
 from app.vault.external_vault import ExternalVaultBackend
 from app.vault.file_reference import FileReferenceBackend
 from app.vault.local_encrypted import LocalEncryptedBackend
 from app.vault.rotation import rotate_secret_value
+from app.rbac import active_memberships, has_permission, is_global_admin, normalized_role, permitted_server_ids
 
 
 router = APIRouter(prefix="/api/secrets", tags=["secrets"])
@@ -35,9 +36,36 @@ def _get_secret(db: DBSession, secret_id: int) -> Secret:
     return secret
 
 
+def _visible_secret_ids(db: DBSession, user: User) -> set[int] | None:
+    if is_global_admin(user):
+        return None
+    memberships = active_memberships(db, user)
+    if normalized_role(user.role) == "operator" and any(item.group.name == "Legacy compatibility" for item in memberships):
+        return None
+    if not any(has_permission(db, user, "secrets.use", group_id=item.server_group_id) for item in memberships):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing secrets.use permission")
+    server_ids = permitted_server_ids(db, user, "secrets.use") or set()
+    if not server_ids:
+        return set()
+    rows = db.query(Server.secret_ref_id, Server.gateway_secret_ref_id, Server.ssh_auth_secret_id).filter(Server.id.in_(server_ids)).all()
+    return {secret_id for row in rows for secret_id in row if secret_id is not None}
+
+
+def _visible_secret(db: DBSession, user: User, secret_id: int) -> Secret:
+    secret = _get_secret(db, secret_id)
+    ids = _visible_secret_ids(db, user)
+    if ids is not None and secret_id not in ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Secret not found")
+    return secret
+
+
 @router.get("", response_model=list[schemas.SecretOut])
-def list_secrets(_: User = Depends(require_roles("approver", "admin")), db: DBSession = Depends(get_db)):
-    return [_secret_out(item) for item in db.query(Secret).order_by(Secret.created_at.desc()).all()]
+def list_secrets(current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    ids = _visible_secret_ids(db, current_user)
+    query = db.query(Secret)
+    if ids is not None:
+        query = query.filter(Secret.id.in_(ids))
+    return [_secret_out(item) for item in query.order_by(Secret.created_at.desc()).all()]
 
 
 @router.post("", response_model=schemas.SecretOut)
@@ -53,8 +81,8 @@ def create_secret(payload: schemas.SecretCreate, request: Request, current_user:
 
 
 @router.get("/{secret_id}", response_model=schemas.SecretOut)
-def get_secret(secret_id: int, current_user: User = Depends(require_roles("approver", "admin")), db: DBSession = Depends(get_db)):
-    return _secret_out(_get_secret(db, secret_id))
+def get_secret(secret_id: int, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    return _secret_out(_visible_secret(db, current_user, secret_id))
 
 
 @router.put("/{secret_id}", response_model=schemas.SecretOut)
@@ -101,8 +129,8 @@ def rotate_secret(secret_id: int, request: Request, current_user: User = Depends
 
 
 @router.get("/{secret_id}/versions", response_model=list[schemas.SecretVersionOut])
-def list_versions(secret_id: int, _: User = Depends(require_roles("approver", "admin")), db: DBSession = Depends(get_db)):
-    _get_secret(db, secret_id)
+def list_versions(secret_id: int, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    _visible_secret(db, current_user, secret_id)
     return [schemas.SecretVersionOut.model_validate(item).model_dump() for item in db.query(SecretVersion).filter(SecretVersion.secret_id == secret_id).order_by(SecretVersion.version.desc()).all()]
 
 

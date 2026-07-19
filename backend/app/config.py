@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     pam_default_admin_email: str = "root@localhost.localdomain"
     pam_default_admin_password: str = "admin123"
     pam_access_mode: str = "direct"
+    pam_group_scoped_access: bool = True
     pam_gateway_enabled: bool = True
     pam_gateway_host: str = "0.0.0.0"
     pam_gateway_port: int = 2222

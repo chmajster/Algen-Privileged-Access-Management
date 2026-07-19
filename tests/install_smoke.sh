@@ -4,40 +4,43 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="$ROOT_DIR/install.sh"
 
+expect_failure() {
+  local description="$1"; shift
+  if bash "$INSTALLER" "$@" >/dev/null 2>&1; then
+    echo "Expected failure: $description" >&2
+    exit 1
+  fi
+}
+
 bash -n "$INSTALLER"
-grep -F "libpam0g" "$INSTALLER" >/dev/null
-grep -F "find_library(\"pam\")" "$INSTALLER" >/dev/null
-
 bash "$INSTALLER" --help >/dev/null
-bash "$INSTALLER" --help | grep -F -- "--port PORT" >/dev/null
-bash "$INSTALLER" --help | grep -F -- "--gateway-port PORT" >/dev/null
-if bash "$INSTALLER" --silent --yes --port 0 --dry-run >/dev/null 2>&1; then
-  echo "Installer accepted an invalid HTTP port." >&2
-  exit 1
-fi
-if bash "$INSTALLER" --silent --yes --gateway-port 65536 --dry-run >/dev/null 2>&1; then
-  echo "Installer accepted an invalid gateway port." >&2
-  exit 1
-fi
+bash "$INSTALLER" --help | grep -F -- '--reinstall' >/dev/null
+bash "$INSTALLER" --help | grep -F -- '--remove-app' >/dev/null
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-  echo "Installer parser smoke tests passed; Linux dry-run checks skipped on $(uname -s)."
+expect_failure 'conflicting modes' --update --uninstall --dry-run
+expect_failure 'conflicting scopes' --user --system --dry-run
+expect_failure 'conflicting source refs' --branch develop --tag v1 --dry-run
+expect_failure 'invalid HTTP port' --port 0 --dry-run
+expect_failure 'invalid gateway port' --gateway-port 65536 --dry-run
+expect_failure 'unsafe root target' --install-dir / --dry-run
+expect_failure 'relative target' --install-dir relative/path --dry-run
+expect_failure 'newline in environment value' --admin-email $'admin@example.test\nINJECTED=yes' --dry-run
+expect_failure 'silent without consent' --silent --user
+
+if [[ "$(uname -s)" != Linux ]]; then
+  echo "Installer syntax/parser tests passed; Linux dry runs skipped."
   exit 0
 fi
 
+bash "$INSTALLER" --dry-run --user >/dev/null
+bash "$INSTALLER" --dry-run --system >/dev/null
+bash "$INSTALLER" --dry-run --update >/dev/null
+bash "$INSTALLER" --dry-run --uninstall >/dev/null
 bash "$INSTALLER" --silent --yes --user --no-service --dry-run >/dev/null
-DRY_RUN_OUTPUT="$(bash "$INSTALLER" --silent --yes --no-service --dry-run)"
-grep -F "/opt/algen-pam" <<<"$DRY_RUN_OUTPUT" >/dev/null
-grep -F "/archive/refs/heads/main.tar.gz" <<<"$DRY_RUN_OUTPUT" >/dev/null
-if grep -E '^\[dry-run\] git clone' <<<"$DRY_RUN_OUTPUT" >/dev/null; then
-  echo "Installer dry-run unexpectedly uses git clone." >&2
-  exit 1
-fi
-bash "$INSTALLER" --silent --yes --user --no-service --admin-user admin --admin-email admin@example.local --admin-password admin123 --dry-run >/dev/null
-bash "$INSTALLER" --uninstall --user --yes --dry-run --keep-config --keep-logs >/dev/null
+bash "$INSTALLER" --silent --yes --system --service --dry-run >/dev/null
 
-if [[ -t 0 ]]; then
-  bash "$INSTALLER" --dry-run >/dev/null
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck -S warning "$INSTALLER"
 fi
 
-echo "Installer smoke tests passed."
+echo 'Installer smoke tests passed.'

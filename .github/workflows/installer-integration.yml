@@ -15,6 +15,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Bash syntax and ShellCheck
+        run: |
+          bash -n install.sh
+          shellcheck -S warning install.sh
       - name: Installer smoke tests
         run: bash tests/install_smoke.sh
       - name: Full install, update, service, and uninstall test

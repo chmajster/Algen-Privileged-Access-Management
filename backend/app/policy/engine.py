@@ -4,7 +4,8 @@ from dataclasses import asdict, dataclass, field
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
-from app.models import AccessGrant, PolicyRule, RiskEvent, ServerGroup, SessionCommand
+from app.models import AccessGrant, PolicyRule, RiskEvent, ServerGroup, ServerGroupMember, SessionCommand
+from app.rbac import active_memberships, effective_permissions
 from app.session_monitor import detect_sudo_command
 
 from .actions import action_names, load_actions
@@ -24,6 +25,9 @@ class PolicyDecision:
     step_up_valid_until: str | None = None
     requires_session_recording: bool = False
     requires_gateway: bool = False
+    denies_direct_ssh: bool = False
+    max_grant_minutes: int | None = None
+    allowed_access_types: list[str] | None = None
     risk_score: int = 0
     severity: str = "info"
     matched_rules: list[dict] = field(default_factory=list)
@@ -38,11 +42,29 @@ class PolicyEngine:
     def __init__(self, db: DBSession):
         self.db = db
 
-    def _server_group_name(self, server) -> str | None:
-        if not getattr(server, "server_group_id", None):
-            return None
-        group = self.db.get(ServerGroup, server.server_group_id)
-        return group.name if group else None
+    def _rbac_context(self, user, server) -> dict:
+        memberships = active_memberships(self.db, user, server_id=server.id)
+        group_rows = self.db.query(ServerGroup.id, ServerGroup.name).join(ServerGroupMember).filter(
+            ServerGroupMember.server_id == server.id, ServerGroup.enabled.is_(True)
+        ).all()
+        group_ids = [row.id for row in group_rows]
+        names = [row.name for row in group_rows]
+        valid_until = [membership.valid_to.isoformat() for membership in memberships if membership.valid_to]
+        permissions = [
+            item["permission"] for item in effective_permissions(self.db, user, server_id=server.id)
+            if item["effect"] == "allow"
+        ]
+        return {
+            "user_role": "operator" if user.role == "approver" else user.role,
+            "group_role": [membership.group_role for membership in memberships],
+            "server_group_ids": group_ids,
+            "server_group_names": names,
+            "server_group": names[0] if len(names) == 1 else None,
+            "effective_permissions": permissions,
+            "membership_valid_until": min(valid_until) if valid_until else None,
+            "server_environment": server.environment,
+            "server_criticality": server.criticality,
+        }
 
     def _rules(self, rule_type: str, context: dict) -> list[tuple[PolicyRule, dict]]:
         if not settings.pam_policy_engine_enabled:
@@ -55,7 +77,7 @@ class PolicyEngine:
                 continue
             if rule.access_type and rule.access_type not in {"*", context.get("access_type")}:
                 continue
-            if rule.server_group and rule.server_group not in {"*", context.get("server_group")}:
+            if rule.server_group and rule.server_group != "*" and rule.server_group not in context.get("server_group_names", [context.get("server_group")]):
                 continue
             condition = load_json(rule.condition_json)
             if matches_condition(condition, context):
@@ -78,6 +100,15 @@ class PolicyEngine:
                 decision.requires_session_recording = True
             if actions.get("requires_gateway"):
                 decision.requires_gateway = True
+            if actions.get("deny_direct_ssh"):
+                decision.denies_direct_ssh = True
+                decision.requires_gateway = True
+            if actions.get("max_grant_minutes") is not None:
+                value = int(actions["max_grant_minutes"])
+                decision.max_grant_minutes = min(decision.max_grant_minutes or value, value)
+            if isinstance(actions.get("allowed_access_types"), list):
+                allowed = set(actions["allowed_access_types"])
+                decision.allowed_access_types = sorted(allowed if decision.allowed_access_types is None else allowed & set(decision.allowed_access_types))
         decision.denied = bool(decision.denied)
         decision.allowed = not decision.denied
         decision.severity = severity_for_score(decision.risk_score)
@@ -97,8 +128,16 @@ class PolicyEngine:
             score += 20
         if server.criticality == "critical":
             score += 30
-        context = {"environment": server.environment, "user_role": user.role, "access_type": access_type, "reason": reason, "criticality": server.criticality, "server_group": self._server_group_name(server)}
+        context = {"environment": server.environment, "access_type": access_type, "reason": reason, "criticality": server.criticality, **self._rbac_context(user, server)}
         decision = self._base_decision(score, self._rules("access_request", context), "Access request evaluated")
+        if decision.max_grant_minutes is not None and duration > decision.max_grant_minutes:
+            decision.denied = True
+            decision.allowed = False
+            decision.message = "Requested duration exceeds policy limit"
+        if decision.allowed_access_types is not None and access_type not in decision.allowed_access_types:
+            decision.denied = True
+            decision.allowed = False
+            decision.message = "Requested access type is restricted by policy"
         if settings.pam_require_approval_for_prod and server.environment == "prod":
             decision.requires_approval = True
         if settings.pam_require_session_recording_for_prod and server.environment == "prod":
@@ -155,6 +194,8 @@ class PolicyEngine:
     def evaluate_gateway_login(self, user, server, grant) -> PolicyDecision:
         score = 0 if grant else 30
         context = {"environment": server.environment if server else None, "user_role": user.role if user else None, "has_grant": bool(grant)}
+        if user and server:
+            context.update(self._rbac_context(user, server))
         decision = self._base_decision(score, self._rules("gateway_login", context), "Gateway login evaluated")
         if not grant:
             decision.denied = True

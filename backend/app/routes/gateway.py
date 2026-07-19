@@ -12,33 +12,28 @@ from app.gateway.server import state as gateway_state
 from app.gateway.service import finish_gateway_connection
 from app.models import AccessGrant, AccessRequest, GatewayConnection, GatewayEvent, GatewayRecording, User
 from app.mfa.step_up import require_step_up
+from app.rbac import has_permission, is_global_admin, normalized_role, permitted_server_ids
 
 
 router = APIRouter(prefix="/api/gateway", tags=["gateway"])
 
 
 def _can_view_grant(db: DBSession, user: User, grant_id: int) -> bool:
-    if user.role == "admin":
+    if is_global_admin(user):
         return True
     grant = db.get(AccessGrant, grant_id)
     if not grant:
         return False
-    if grant.user_id == user.id:
-        return True
-    if user.role == "approver":
-        request = db.get(AccessRequest, grant.request_id)
-        return bool(request and request.approver_id == user.id)
-    return False
+    permission = "sessions.view_own" if grant.user_id == user.id else "sessions.view_group"
+    return has_permission(db, user, permission, server_id=grant.server_id)
 
 
 def _visible_connections(db: DBSession, user: User):
     query = db.query(GatewayConnection)
-    if user.role == "user":
-        query = query.filter(GatewayConnection.user_id == user.id)
-    elif user.role == "approver":
-        query = query.join(AccessGrant, GatewayConnection.grant_id == AccessGrant.id).join(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter(
-            (GatewayConnection.user_id == user.id) | (AccessRequest.approver_id == user.id)
-        )
+    if not is_global_admin(user):
+        own_ids = permitted_server_ids(db, user, "sessions.view_own") or set()
+        group_ids = permitted_server_ids(db, user, "sessions.view_group") or set()
+        query = query.filter(((GatewayConnection.user_id == user.id) & GatewayConnection.server_id.in_(own_ids)) | GatewayConnection.server_id.in_(group_ids))
     return query
 
 
@@ -95,7 +90,9 @@ def terminate_connection(connection_id: int, current_user: User = Depends(get_cu
     if not connection:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Gateway connection not found")
     if not _can_view_grant(db, current_user, connection.grant_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Gateway connection not found")
+    if not has_permission(db, current_user, "sessions.terminate", server_id=connection.server_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing sessions.terminate permission")
     finish_gateway_connection(db, connection, "manual_terminate")
     db.commit()
     db.refresh(connection)
@@ -105,24 +102,18 @@ def terminate_connection(connection_id: int, current_user: User = Depends(get_cu
 @router.get("/events", response_model=list[schemas.GatewayEventOut])
 def list_events(current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
     query = db.query(GatewayEvent)
-    if current_user.role == "user":
-        query = query.filter(GatewayEvent.user_id == current_user.id)
-    elif current_user.role == "approver":
-        query = query.join(AccessGrant, GatewayEvent.grant_id == AccessGrant.id).join(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter(
-            (GatewayEvent.user_id == current_user.id) | (AccessRequest.approver_id == current_user.id)
-        )
+    if not is_global_admin(current_user):
+        own_ids = permitted_server_ids(db, current_user, "sessions.view_own") or set(); group_ids = permitted_server_ids(db, current_user, "sessions.view_group") or set()
+        query = query.filter(((GatewayEvent.user_id == current_user.id) & GatewayEvent.server_id.in_(own_ids)) | GatewayEvent.server_id.in_(group_ids))
     return [_event_out(item) for item in query.order_by(GatewayEvent.created_at.desc()).limit(1000).all()]
 
 
 @router.get("/recordings", response_model=list[schemas.GatewayRecordingOut])
 def list_recordings(current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
     query = db.query(GatewayRecording)
-    if current_user.role == "user":
-        query = query.filter(GatewayRecording.user_id == current_user.id)
-    elif current_user.role == "approver":
-        query = query.join(AccessGrant, GatewayRecording.grant_id == AccessGrant.id).join(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter(
-            (GatewayRecording.user_id == current_user.id) | (AccessRequest.approver_id == current_user.id)
-        )
+    if not is_global_admin(current_user):
+        own_ids = permitted_server_ids(db, current_user, "sessions.view_own") or set(); group_ids = permitted_server_ids(db, current_user, "sessions.view_group") or set()
+        query = query.filter(((GatewayRecording.user_id == current_user.id) & GatewayRecording.server_id.in_(own_ids)) | GatewayRecording.server_id.in_(group_ids))
     return [_recording_out(item) for item in query.order_by(GatewayRecording.created_at.desc()).limit(1000).all()]
 
 
@@ -132,7 +123,7 @@ def get_recording(recording_id: int, current_user: User = Depends(get_current_us
     if not recording:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
     if not _can_view_grant(db, current_user, recording.grant_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
     return _recording_out(recording)
 
 
@@ -142,8 +133,8 @@ def download_recording(recording_id: int, request: Request, current_user: User =
     if not recording:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
     if not _can_view_grant(db, current_user, recording.grant_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
-    if current_user.role in {"admin", "approver"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording not found")
+    if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "view_recording", request, reason="Recording download requires MFA step-up", force=True)
     path = Path(recording.recording_path)
     if not path.exists():

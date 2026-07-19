@@ -6,28 +6,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy.orm import Session as DBSession
 
 from app import schemas
-from app.auth import get_current_user
+from app.audit import write_audit
+from app.auth import get_current_user, source_ip
 from app.database import get_db
-from app.models import AccessGrant, AccessRequest, Session, SessionCommand, User
+from app.models import AccessGrant, AccessRequest, GatewayConnection, Session, SessionCommand, User
 from app.mfa.step_up import require_step_up
+from app.rbac import has_permission, is_global_admin, normalized_role, permitted_server_ids
+from app.gateway.service import finish_gateway_connection
 
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
 
 def _can_view(db: DBSession, user: User, item: Session) -> bool:
-    if user.role == "admin" or user.id == item.user_id:
+    if is_global_admin(user):
         return True
-    if user.role == "approver":
-        return (
-            db.query(Session)
-            .join(AccessGrant, Session.grant_id == AccessGrant.id)
-            .join(AccessRequest, AccessGrant.request_id == AccessRequest.id)
-            .filter(Session.id == item.id, AccessRequest.approver_id == user.id)
-            .count()
-            > 0
-        )
-    return False
+    permission = "sessions.view_own" if user.id == item.user_id else "sessions.view_group"
+    return has_permission(db, user, permission, server_id=item.server_id)
 
 
 def _session_out(item: Session) -> dict:
@@ -63,12 +58,10 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 def _visible_sessions_query(db: DBSession, current_user: User):
     query = db.query(Session)
-    if current_user.role == "user":
-        query = query.filter(Session.user_id == current_user.id)
-    elif current_user.role == "approver":
-        query = query.join(AccessGrant, Session.grant_id == AccessGrant.id).join(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter(
-            (Session.user_id == current_user.id) | (AccessRequest.approver_id == current_user.id)
-        )
+    if not is_global_admin(current_user):
+        own_ids = permitted_server_ids(db, current_user, "sessions.view_own") or set()
+        group_ids = permitted_server_ids(db, current_user, "sessions.view_group") or set()
+        query = query.filter(((Session.user_id == current_user.id) & Session.server_id.in_(own_ids)) | Session.server_id.in_(group_ids))
     return query
 
 
@@ -92,12 +85,10 @@ def _apply_session_filters(query, user_id: int | None, server_id: int | None, st
 
 def _visible_commands_query(db: DBSession, current_user: User):
     query = db.query(SessionCommand)
-    if current_user.role == "user":
-        query = query.filter(SessionCommand.user_id == current_user.id)
-    elif current_user.role == "approver":
-        query = query.join(AccessGrant, SessionCommand.grant_id == AccessGrant.id).join(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter(
-            (SessionCommand.user_id == current_user.id) | (AccessRequest.approver_id == current_user.id)
-        )
+    if not is_global_admin(current_user):
+        own_ids = permitted_server_ids(db, current_user, "commands.view_own") or set()
+        group_ids = permitted_server_ids(db, current_user, "commands.view_group") or set()
+        query = query.filter(((SessionCommand.user_id == current_user.id) & SessionCommand.server_id.in_(own_ids)) | SessionCommand.server_id.in_(group_ids))
     return query
 
 
@@ -140,7 +131,7 @@ def get_session(session_id: int, current_user: User = Depends(get_current_user),
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if not _can_view(db, current_user, item):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return _session_out(item)
 
 
@@ -158,9 +149,27 @@ def session_commands(
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if not _can_view(db, current_user, session):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     query = _apply_command_filters(db.query(SessionCommand).filter(SessionCommand.session_id == session_id), None, None, q, sudo, date_from, date_to)
     return [_command_out(item) for item in query.order_by(SessionCommand.executed_at.desc()).all()]
+
+
+@router.post("/sessions/{session_id:int}/terminate", response_model=schemas.SessionOut)
+def terminate_session(session_id: int, request: Request, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    item = db.get(Session, session_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if not has_permission(db, current_user, "sessions.terminate", server_id=item.server_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if item.status == "active":
+        connection = db.query(GatewayConnection).filter(GatewayConnection.session_id == item.id, GatewayConnection.status == "active").first()
+        if connection:
+            finish_gateway_connection(db, connection, "manual_terminate")
+        else:
+            item.status = "terminated"; item.ended_at = datetime.now(item.started_at.tzinfo); item.termination_reason = "manual_terminate"
+        write_audit(db, "session.terminated", f"Terminated session {item.id}", user_id=current_user.id, server_id=item.server_id, session_id=item.id, source_ip=source_ip(request))
+        db.commit(); db.refresh(item)
+    return _session_out(item)
 
 
 @router.get("/sessions/{session_id:int}/recording", response_model=schemas.Message)
@@ -169,8 +178,8 @@ def session_recording(session_id: int, request: Request, current_user: User = De
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if not _can_view(db, current_user, session):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
-    if current_user.role in {"admin", "approver"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "view_recording", request, reason="Recording access requires MFA step-up", force=True)
     if not session.session_record_path or session.session_record_path.startswith("session_id="):
         return {"message": "No recording for this session"}
@@ -192,6 +201,14 @@ def list_commands(
     return [_command_out(item) for item in query.order_by(SessionCommand.executed_at.desc()).limit(1000).all()]
 
 
+@router.get("/session-commands/{command_id:int}", response_model=schemas.SessionCommandOut)
+def get_command(command_id: int, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    item = db.get(SessionCommand, command_id)
+    if not item or not _visible_commands_query(db, current_user).filter(SessionCommand.id == command_id).first():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Command not found")
+    return _command_out(item)
+
+
 @router.get("/sessions/export.csv")
 def export_sessions(
     request: Request,
@@ -204,7 +221,7 @@ def export_sessions(
     current_user: User = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    if current_user.role in {"admin", "approver"}:
+    if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "export_session_logs", request, reason="Session export requires MFA step-up", force=True)
     query = _apply_session_filters(_visible_sessions_query(db, current_user), user_id, server_id, status_value, active, date_from, date_to)
     output = io.StringIO()
@@ -227,7 +244,7 @@ def export_commands(
     current_user: User = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    if current_user.role in {"admin", "approver"}:
+    if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "export_session_logs", request, reason="Command export requires MFA step-up", force=True)
     query = _apply_command_filters(_visible_commands_query(db, current_user), user_id, server_id, q, sudo, date_from, date_to)
     output = io.StringIO()

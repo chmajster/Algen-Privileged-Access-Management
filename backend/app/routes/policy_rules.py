@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 from app import schemas
 from app.auth import get_current_user, require_roles
 from app.database import get_db
-from app.models import PolicyRule, Server, ServerGroup, ServerGroupMember, User
+from app.models import PolicyRule, Server, User
 from app.mfa.step_up import require_step_up
 from app.policy.engine import PolicyEngine
 from app.policy.rules import validate_rule_json
@@ -125,68 +125,3 @@ def evaluate_test(payload: schemas.PolicyEvaluateIn, _: User = Depends(require_r
     return json.loads(decision.to_json())
 
 
-@router.get("/server-groups", response_model=list[schemas.ServerGroupOut])
-def list_server_groups(_: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    return [schemas.ServerGroupOut.model_validate(item).model_dump() for item in db.query(ServerGroup).order_by(ServerGroup.name).all()]
-
-
-@router.post("/server-groups", response_model=schemas.ServerGroupOut)
-def create_server_group(payload: schemas.ServerGroupCreate, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    group = ServerGroup(**payload.model_dump())
-    db.add(group)
-    db.commit()
-    db.refresh(group)
-    return schemas.ServerGroupOut.model_validate(group).model_dump()
-
-
-@router.get("/server-groups/{group_id:int}", response_model=schemas.ServerGroupOut)
-def get_server_group(group_id: int, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    group = db.get(ServerGroup, group_id)
-    if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Server group not found")
-    return schemas.ServerGroupOut.model_validate(group).model_dump()
-
-
-@router.put("/server-groups/{group_id:int}", response_model=schemas.ServerGroupOut)
-def update_server_group(group_id: int, payload: schemas.ServerGroupUpdate, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    group = db.get(ServerGroup, group_id)
-    if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Server group not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(group, key, value)
-    db.commit()
-    db.refresh(group)
-    return schemas.ServerGroupOut.model_validate(group).model_dump()
-
-
-@router.delete("/server-groups/{group_id:int}", response_model=schemas.Message)
-def delete_server_group(group_id: int, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    group = db.get(ServerGroup, group_id)
-    if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Server group not found")
-    db.delete(group)
-    db.commit()
-    return {"message": "server group deleted"}
-
-
-@router.post("/server-groups/{group_id:int}/servers/{server_id:int}", response_model=schemas.Message)
-def add_group_member(group_id: int, server_id: int, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    if not db.query(ServerGroupMember).filter(ServerGroupMember.server_group_id == group_id, ServerGroupMember.server_id == server_id).first():
-        db.add(ServerGroupMember(server_group_id=group_id, server_id=server_id))
-    server = db.get(Server, server_id)
-    if server:
-        server.server_group_id = group_id
-    db.commit()
-    return {"message": "server added to group"}
-
-
-@router.delete("/server-groups/{group_id:int}/servers/{server_id:int}", response_model=schemas.Message)
-def remove_group_member(group_id: int, server_id: int, _: User = Depends(require_roles("admin")), db: DBSession = Depends(get_db)):
-    member = db.query(ServerGroupMember).filter(ServerGroupMember.server_group_id == group_id, ServerGroupMember.server_id == server_id).first()
-    if member:
-        db.delete(member)
-    server = db.get(Server, server_id)
-    if server and server.server_group_id == group_id:
-        server.server_group_id = None
-    db.commit()
-    return {"message": "server removed from group"}

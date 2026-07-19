@@ -32,11 +32,12 @@ def _monitoring_level(decision: PolicyDecision, server: Server) -> str:
 
 
 def find_policy(db: Session, user: User, server: Server, access_type: str) -> Policy | None:
+    roles = ["operator", "approver"] if user.role in {"operator", "approver"} else [user.role]
     policies = (
         db.query(Policy)
         .filter(
             Policy.enabled.is_(True),
-            Policy.role == user.role,
+            Policy.role.in_(roles),
             Policy.access_type == access_type,
         )
         .all()

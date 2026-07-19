@@ -1,18 +1,19 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import schemas
+from app.audit import reset_audit_user_agent, set_audit_user_agent
 from app.auth import get_current_user
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.identity.local_provider import LocalAuthenticationBackendError, validate_os_auth_backend
 from app.models import User
-from app.routes import access_grants, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, servers, sessions, users
+from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
 from app.seed import seed_demo_data
 
@@ -33,6 +34,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Linux PAM Lite", version="1.0.0", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def bind_audit_request_context(request: Request, call_next):
+    token = set_audit_user_agent(request.headers.get("user-agent"))
+    try:
+        return await call_next(request)
+    finally:
+        reset_audit_user_agent(token)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,6 +55,7 @@ app.include_router(auth.router)
 app.include_router(mfa.router)
 app.include_router(identity.router)
 app.include_router(users.router)
+app.include_router(access_groups.router)
 app.include_router(servers.router)
 app.include_router(access_requests.router)
 app.include_router(access_grants.router)
@@ -67,6 +78,7 @@ def get_settings(_: User = Depends(get_current_user)):
         "session_log_dir": settings.pam_session_log_dir,
         "scheduler_interval_seconds": settings.scheduler_interval_seconds,
         "access_mode": settings.pam_access_mode,
+        "group_scoped_access": settings.pam_group_scoped_access,
         "gateway_enabled": settings.pam_gateway_enabled,
         "gateway_host": settings.pam_gateway_host,
         "gateway_port": settings.pam_gateway_port,

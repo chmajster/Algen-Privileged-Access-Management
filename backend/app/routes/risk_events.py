@@ -9,6 +9,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import AccessGrant, AccessRequest, RiskEvent, User
 from app.mfa.step_up import require_step_up
+from app.rbac import is_global_admin, normalized_role, permitted_server_ids
 
 
 router = APIRouter(prefix="/api/risk-events", tags=["risk-events"])
@@ -16,10 +17,9 @@ router = APIRouter(prefix="/api/risk-events", tags=["risk-events"])
 
 def _visible_query(db: DBSession, user: User):
     query = db.query(RiskEvent)
-    if user.role == "user":
-        query = query.filter(RiskEvent.user_id == user.id)
-    elif user.role == "approver":
-        query = query.outerjoin(AccessGrant, RiskEvent.grant_id == AccessGrant.id).outerjoin(AccessRequest, AccessGrant.request_id == AccessRequest.id).filter((RiskEvent.user_id == user.id) | (AccessRequest.approver_id == user.id))
+    if not is_global_admin(user):
+        ids = permitted_server_ids(db, user, "alerts.view") or set()
+        query = query.filter((RiskEvent.user_id == user.id) | RiskEvent.server_id.in_(ids))
     return query
 
 
@@ -50,7 +50,7 @@ def get_risk_event(event_id: int, current_user: User = Depends(get_current_user)
 
 @router.get("/export.csv")
 def export_risk_events(request: Request, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
-    if current_user.role in {"admin", "approver"}:
+    if normalized_role(current_user.role) in {"admin", "operator"}:
         require_step_up(db, current_user, "export_risk_logs", request, reason="Risk export requires MFA step-up", force=True)
     output = io.StringIO()
     writer = csv.writer(output)

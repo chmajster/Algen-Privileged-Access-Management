@@ -32,7 +32,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 def require_roles(*roles: str):
     def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
+        current_role = "operator" if current_user.role == "approver" else current_user.role
+        accepted = {"operator" if role == "approver" else role for role in roles}
+        if current_role not in accepted:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")
         return current_user
 

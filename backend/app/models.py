@@ -140,6 +140,7 @@ class Server(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     hostname: Mapped[str] = mapped_column(String(255), index=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     ip_address: Mapped[str] = mapped_column(String(64))
     ssh_port: Mapped[int] = mapped_column(Integer, default=22)
     environment: Mapped[str] = mapped_column(String(64), index=True)
@@ -147,6 +148,7 @@ class Server(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     ssh_admin_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ssh_auth_type: Mapped[str] = mapped_column(String(32), default="vault_secret")
     ssh_private_key_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     session_recording_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     command_logging_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -252,6 +254,10 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(128), index=True)
     message: Mapped[str] = mapped_column(Text)
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    object_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    object_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    result: Mapped[str] = mapped_column(String(32), default="success", index=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
@@ -580,6 +586,29 @@ class ServerGroup(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     environment: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    allowed_access_types: Mapped[str] = mapped_column(String(128), default="ssh_only")
+    max_grant_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    allowed_durations: Mapped[str] = mapped_column(String(128), default="30,60")
+    require_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    require_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_gateway: Mapped[bool] = mapped_column(Boolean, default=False)
+    deny_direct_ssh: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_command_logging: Mapped[bool] = mapped_column(Boolean, default=True)
+    require_session_recording: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_hours: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    allowed_weekdays: Mapped[str] = mapped_column(String(32), default="0,1,2,3,4,5,6")
+    max_concurrent_grants: Mapped[int] = mapped_column(Integer, default=1)
+    max_active_sessions: Mapped[int] = mapped_column(Integer, default=1)
+    allow_self_extension: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_auto_grant: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_reason: Mapped[bool] = mapped_column(Boolean, default=True)
+    min_reason_length: Mapped[int] = mapped_column(Integer, default=10)
+    revoke_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
+    terminate_sessions_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class ServerGroupMember(Base):
@@ -589,7 +618,171 @@ class ServerGroupMember(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     group: Mapped[ServerGroup] = relationship("ServerGroup")
     server: Mapped[Server] = relationship("Server")
+
+
+class ServerGroupUserMembership(Base, TimestampMixin):
+    __tablename__ = "server_group_user_memberships"
+    __table_args__ = (UniqueConstraint("server_group_id", "user_id", name="uq_server_group_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    group_role: Mapped[str] = mapped_column(String(32), default="user", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    permission_template_id: Mapped[int | None] = mapped_column(ForeignKey("access_group_permission_templates.id"), nullable=True, index=True)
+
+    group: Mapped[ServerGroup] = relationship("ServerGroup")
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id])
+    created_by: Mapped[User | None] = relationship("User", foreign_keys=[created_by_id])
+    permission_template: Mapped["PermissionTemplate | None"] = relationship("PermissionTemplate")
+
+
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role", "permission_id", name="uq_role_permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), index=True)
+    permission_id: Mapped[int] = mapped_column(ForeignKey("permissions.id"), index=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, default=True)
+    permission: Mapped[Permission] = relationship("Permission")
+
+
+class GroupPermission(Base, TimestampMixin):
+    __tablename__ = "group_permissions"
+    __table_args__ = (UniqueConstraint("server_group_id", "permission_id", name="uq_group_permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
+    permission_id: Mapped[int] = mapped_column(ForeignKey("permissions.id"), index=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    permission: Mapped[Permission] = relationship("Permission")
+
+
+class UserGroupPermission(Base, TimestampMixin):
+    __tablename__ = "user_group_permissions"
+    __table_args__ = (UniqueConstraint("server_group_id", "user_id", "permission_id", name="uq_user_group_permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_group_id: Mapped[int] = mapped_column(ForeignKey("server_groups.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    permission_id: Mapped[int] = mapped_column(ForeignKey("permissions.id"), index=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    permission: Mapped[Permission] = relationship("Permission")
+
+
+# Compatibility tables from the first RBAC iteration. Startup migration reads
+# them into ServerGroup; authorization never queries them. PermissionTemplate
+# remains active because it is a reusable UI preset, not an access scope.
+class PermissionTemplate(Base, TimestampMixin):
+    __tablename__ = "access_group_permission_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    permissions_json: Mapped[str] = mapped_column(Text, default="{}")
+    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AccessGroup(Base, TimestampMixin):
+    __tablename__ = "access_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    environment: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    allowed_access_types: Mapped[str] = mapped_column(String(128), default="ssh_only")
+    max_grant_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    allowed_durations: Mapped[str] = mapped_column(String(128), default="30,60")
+    require_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    require_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_gateway: Mapped[bool] = mapped_column(Boolean, default=False)
+    deny_direct_ssh: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_command_logging: Mapped[bool] = mapped_column(Boolean, default=True)
+    require_session_recording: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_hours: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    allowed_weekdays: Mapped[str] = mapped_column(String(32), default="0,1,2,3,4,5,6")
+    max_concurrent_grants: Mapped[int] = mapped_column(Integer, default=1)
+    max_active_sessions: Mapped[int] = mapped_column(Integer, default=1)
+    allow_self_extension: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_auto_grant: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_reason: Mapped[bool] = mapped_column(Boolean, default=True)
+    min_reason_length: Mapped[int] = mapped_column(Integer, default=10)
+    revoke_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
+    terminate_sessions_on_membership_loss: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AccessGroupUser(Base):
+    __tablename__ = "access_group_users"
+    __table_args__ = (UniqueConstraint("access_group_id", "user_id", name="uq_access_group_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    access_group_id: Mapped[int] = mapped_column(ForeignKey("access_groups.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    group_role: Mapped[str] = mapped_column(String(32), default="user", index=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    assigned_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    permission_template_id: Mapped[int | None] = mapped_column(ForeignKey("access_group_permission_templates.id"), nullable=True)
+
+    group: Mapped[AccessGroup] = relationship("AccessGroup")
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id])
+    assigned_by: Mapped[User | None] = relationship("User", foreign_keys=[assigned_by_id])
+    permission_template: Mapped[PermissionTemplate | None] = relationship("PermissionTemplate")
+
+
+class AccessGroupServer(Base):
+    __tablename__ = "access_group_servers"
+    __table_args__ = (UniqueConstraint("access_group_id", "server_id", name="uq_access_group_server"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    access_group_id: Mapped[int] = mapped_column(ForeignKey("access_groups.id"), index=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), index=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    assigned_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    group: Mapped[AccessGroup] = relationship("AccessGroup")
+    server: Mapped[Server] = relationship("Server")
+
+
+class AccessGroupPermission(Base):
+    __tablename__ = "access_group_permissions"
+    __table_args__ = (UniqueConstraint("access_group_id", "membership_id", "permission", name="uq_access_group_permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    access_group_id: Mapped[int] = mapped_column(ForeignKey("access_groups.id"), index=True)
+    membership_id: Mapped[int | None] = mapped_column(ForeignKey("access_group_users.id"), nullable=True, index=True)
+    permission: Mapped[str] = mapped_column(String(128), index=True)
+    effect: Mapped[str] = mapped_column(String(16), default="allow", index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    group: Mapped[AccessGroup] = relationship("AccessGroup")
+    membership: Mapped[AccessGroupUser | None] = relationship("AccessGroupUser")

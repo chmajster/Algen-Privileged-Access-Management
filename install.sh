@@ -1,980 +1,517 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-APP_NAME="algen-pam"
-APP_TITLE="Linux PAM Lite"
-APP_VERSION="1.0.0"
-DEFAULT_REPO_URL="https://github.com/chmajster/Algen-Privileged-Access-Management"
-DEFAULT_BRANCH="main"
+# Algen PAM installer.  All mutations happen only after the execution summary
+# has been accepted.  Keep this file self-contained so it can be piped to bash.
 
+# ---- constants and installer state -----------------------------------------
+readonly APP_ID="algen-pam"
+readonly APP_TITLE="Algen PAM / Linux PAM Lite"
+readonly INSTALLER_VERSION="2.0.0"
+readonly DEFAULT_REPO="https://github.com/chmajster/Algen-Privileged-Access-Management"
+readonly DEFAULT_BRANCH="main"
+readonly REQUIRED_PYTHON_MINOR=12
+
+MODE=""                       # install|update|reinstall|backup|remove-app|uninstall
+MODE_EXPLICIT=0
+SCOPE=""
+SCOPE_EXPLICIT=0
 SILENT=0
-ASSUME_YES=0
-INSTALL_SCOPE=""
-INSTALL_DIR=""
-CREATE_SERVICE=""
-CREATE_DESKTOP=""
-REPO_URL="$DEFAULT_REPO_URL"
-BRANCH_NAME=""
-TAG_NAME=""
-DO_UPDATE=0
-DO_UNINSTALL=0
-REINSTALL_APP=0
-INSTALL_ACTION=""
+YES=0
 DRY_RUN=0
 VERBOSE=0
-KEEP_CONFIG=0
-KEEP_LOGS=0
-PACKAGE_MANAGER=""
-LOG_FILE=""
-INSTALL_OWNER="${SUDO_USER:-${USER:-$(id -un)}}"
-SERVICE_WAS_ACTIVE=0
-TEMP_SERVER_PID=""
-ADMIN_USER="${PAM_DEFAULT_ADMIN_USER:-$INSTALL_OWNER}"
-ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}"
-ADMIN_PASSWORD="${PAM_DEFAULT_ADMIN_PASSWORD:-}"
-ADMIN_PASSWORD_GENERATED=0
-ADMIN_PASSWORD_SUPPLIED=0
-ADMIN_BOOTSTRAP=1
-UPDATE_ADMIN_PASSWORD=0
-LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
-APP_PORT="${ALGEN_PAM_PORT:-8080}"
+SERVICE_CHOICE=""
+DESKTOP_CHOICE=0
+AUTO_PORT=0
+INSTALL_DIR=""
+REPO="$DEFAULT_REPO"
+BRANCH="$DEFAULT_BRANCH"
+BRANCH_EXPLICIT=0
+TAG=""
 APP_HOST="0.0.0.0"
+APP_PORT="${ALGEN_PAM_PORT:-8080}"
 GATEWAY_PORT="${PAM_GATEWAY_PORT:-2222}"
 APP_PORT_EXPLICIT=0
 GATEWAY_PORT_EXPLICIT=0
-PORTS_CHECKED=0
-[[ -n "${ALGEN_PAM_PORT:-}" ]] && APP_PORT_EXPLICIT=1
-[[ -n "${PAM_GATEWAY_PORT:-}" ]] && GATEWAY_PORT_EXPLICIT=1
-[[ -n "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD_SUPPLIED=1 && UPDATE_ADMIN_PASSWORD=1
+ADMIN_USER="${PAM_DEFAULT_ADMIN_USER:-}"
+ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-}"
+ADMIN_PASSWORD=""
+ADMIN_PASSWORD_GENERATED=0
+ADMIN_PASSWORD_SUPPLIED=0
+LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
+KEEP_CONFIG=0
+KEEP_DATA=0
+KEEP_LOGS=0
 
-abort() {
-  echo "ERROR: $*" >&2
+CONFIG_DIR=""; CONFIG_FILE=""; DATA_DIR=""; LOG_DIR=""; LOG_FILE=""
+BIN_PATH=""; SERVICE_FILE=""; DESKTOP_FILE=""; SYSTEMD_USER=0
+TARGET_USER=""; TARGET_HOME=""; TARGET_GROUP=""
+STAGE_ROOT=""; STAGED_APP=""; RELEASE_BACKUP=""; DIAGNOSTIC_PATH=""
+STATE_BACKUP_DIR=""
+TEMP_SERVER_PID=""; SERVICE_WAS_ACTIVE=0; SERVICE_WAS_ENABLED=0
+MUTATIONS_STARTED=0
+
+# ---- logging, errors, and cleanup ------------------------------------------
+timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
+emit() {
+  local level="$1"; shift
+  [[ "$level" != DEBUG || "$VERBOSE" -eq 1 ]] || return 0
+  local line
+  line="[$(timestamp)] [$level] $*"
+  printf '%s\n' "$line" >&2
+  if [[ -n "$LOG_FILE" && -f "$LOG_FILE" && "$DRY_RUN" -eq 0 ]]; then
+    printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null || true
+  fi
+}
+info() { emit INFO "$@"; }
+warn() { emit WARN "$@"; }
+debug() { emit DEBUG "$@"; }
+die() {
+  emit ERROR "$*"
+  [[ -z "$LOG_FILE" ]] || printf 'Log: %s\n' "$LOG_FILE" >&2
+  [[ -z "$DIAGNOSTIC_PATH" ]] || printf 'Diagnostic files: %s\n' "$DIAGNOSTIC_PATH" >&2
+  printf 'Fix the reported condition and run the same command again.\n' >&2
   exit 1
 }
-
-on_interrupt() {
-  if [[ -n "$TEMP_SERVER_PID" ]]; then
-    kill "$TEMP_SERVER_PID" 2>/dev/null || true
+cleanup() {
+  local status=$?
+  [[ -z "$TEMP_SERVER_PID" ]] || { kill "$TEMP_SERVER_PID" 2>/dev/null || true; wait "$TEMP_SERVER_PID" 2>/dev/null || true; }
+  unset ADMIN_PASSWORD
+  if [[ -n "$STAGE_ROOT" && -d "$STAGE_ROOT" ]]; then
+    if [[ "$status" -eq 0 || "$MUTATIONS_STARTED" -eq 0 ]]; then
+      rm -rf -- "$STAGE_ROOT" 2>/dev/null || true
+    else
+      DIAGNOSTIC_PATH="$STAGE_ROOT"
+      printf '[%s] [WARN] Staging retained for diagnostics: %s\n' "$(timestamp)" "$STAGE_ROOT" >&2
+    fi
   fi
-  echo
-  abort "Installation interrupted."
 }
-trap on_interrupt INT TERM
+interrupted() { warn "Operation interrupted; cleanup is running."; exit 130; }
+trap cleanup EXIT
+trap interrupted INT TERM
 
 usage() {
   cat <<'EOF'
-Linux PAM Lite installer
+Algen PAM safe installer
 
-Usage:
-  ./install.sh [options]
+Usage: ./install.sh [mode] [options]
 
-Modes:
-  --silent              run without UI and prompts
-  --update              update an existing installation
-  --uninstall           remove an existing installation
+Modes (exactly one; install/update is inferred when omitted):
+  --install              install a new instance
+  --update               stage and atomically update an existing instance
+  --reinstall            replace application files, preserving state
+  --backup               back up configuration and data
+  --remove-app           remove code and integration, preserve state
+  --uninstall            remove the complete installation
 
-Confirmation:
-  --yes, -y             accept requested operations
-  --dry-run             print actions without changing files
-  --verbose             show more detailed logs
+Operation:  --silent --yes --dry-run --verbose --auto-port
+Target:     --user --system --install-dir PATH
+             --service --no-service --desktop --no-desktop
+Network:    --port PORT --gateway-port PORT
+Source:     --repo URL_OR_PATH --branch NAME --tag NAME
+Admin:      --admin-user NAME --admin-email EMAIL
+             --admin-password PASS --generate-admin-password
+Removal:    --keep-config --keep-data --keep-logs
+Other:      --help, -h
 
-Install target:
-  --install-dir PATH    installation directory
-  --user                install for the current user
-  --system              install system-wide (default: /opt/algen-pam)
-  --port PORT           HTTP port (default: 8080)
-  --gateway-port PORT   SSH gateway port (default: 2222)
-
-Optional integration:
-  --service             create and enable a systemd service
-  --no-service          skip systemd service creation
-  --desktop             create a desktop launcher
-  --no-desktop          skip desktop launcher creation
-
-Admin bootstrap:
-  --admin-user NAME     existing Linux OS account granted application admin role
-  --admin-email EMAIL   email address for the local admin account
-  --admin-password PASS legacy database-auth password (database mode only)
-  --generate-admin-password
-                       generate a random admin password
-
-Source selection:
-  --branch NAME         install from a branch
-  --tag NAME            install from a tag
-  --repo URL            override repository URL
-
-Uninstall:
-  --keep-config         keep configuration files
-  --keep-logs           keep log files
-
-Other:
-  --help, -h            show this help
-
-Examples:
+Compatibility examples:
   ./install.sh
   ./install.sh --silent --yes --user --no-service
-  ./install.sh --silent --yes --admin-user "$(id -un)"
-  ./install.sh --silent --install-dir /opt/algen-pam --system --service --yes
+  ./install.sh --silent --yes --system --service
   ./install.sh --update --system --yes
   ./install.sh --uninstall --user --yes
+  ./install.sh --dry-run
 EOF
 }
 
-expand_path() {
-  local path="$1"
-  path="${path/#\~/$HOME}"
-  printf '%s\n' "$path"
+# ---- argument parsing and validation ---------------------------------------
+select_mode() {
+  local requested="$1"
+  if [[ -n "$MODE" && "$MODE" != "$requested" ]]; then
+    die "Conflicting modes: '$MODE' and '$requested'. Select exactly one mode."
+  fi
+  MODE="$requested"; MODE_EXPLICIT=1
 }
-
+need_value() { [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a value."; }
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --install) select_mode install ;;
+      --update) select_mode update ;;
+      --reinstall) select_mode reinstall ;;
+      --backup) select_mode backup ;;
+      --remove-app) select_mode remove-app ;;
+      --uninstall) select_mode uninstall ;;
       --silent) SILENT=1 ;;
-      --yes|-y) ASSUME_YES=1 ;;
-      --install-dir) shift; [[ $# -gt 0 ]] || abort "--install-dir requires PATH"; INSTALL_DIR="$(expand_path "$1")" ;;
-      --user) INSTALL_SCOPE="user" ;;
-      --system) INSTALL_SCOPE="system" ;;
-      --port) shift; [[ $# -gt 0 ]] || abort "--port requires PORT"; APP_PORT="$1"; APP_PORT_EXPLICIT=1 ;;
-      --gateway-port) shift; [[ $# -gt 0 ]] || abort "--gateway-port requires PORT"; GATEWAY_PORT="$1"; GATEWAY_PORT_EXPLICIT=1 ;;
-      --service) CREATE_SERVICE=1 ;;
-      --no-service) CREATE_SERVICE=0 ;;
-      --desktop) CREATE_DESKTOP=1 ;;
-      --no-desktop) CREATE_DESKTOP=0 ;;
-      --admin-user) shift; [[ $# -gt 0 ]] || abort "--admin-user requires NAME"; ADMIN_USER="$1" ;;
-      --admin-email) shift; [[ $# -gt 0 ]] || abort "--admin-email requires EMAIL"; ADMIN_EMAIL="$1" ;;
-      --admin-password) shift; [[ $# -gt 0 ]] || abort "--admin-password requires PASS"; ADMIN_PASSWORD="$1"; ADMIN_PASSWORD_GENERATED=0; ADMIN_PASSWORD_SUPPLIED=1; UPDATE_ADMIN_PASSWORD=1 ;;
-      --generate-admin-password) ADMIN_PASSWORD=""; ADMIN_PASSWORD_GENERATED=1; ADMIN_PASSWORD_SUPPLIED=1; UPDATE_ADMIN_PASSWORD=1 ;;
-      --branch) shift; [[ $# -gt 0 ]] || abort "--branch requires NAME"; BRANCH_NAME="$1" ;;
-      --tag) shift; [[ $# -gt 0 ]] || abort "--tag requires NAME"; TAG_NAME="$1" ;;
-      --repo) shift; [[ $# -gt 0 ]] || abort "--repo requires URL"; REPO_URL="$1" ;;
-      --update) DO_UPDATE=1 ;;
-      --uninstall) DO_UNINSTALL=1 ;;
+      --yes|-y) YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
       --verbose) VERBOSE=1 ;;
+      --auto-port) AUTO_PORT=1 ;;
+      --user) [[ -z "$SCOPE" || "$SCOPE" == user ]] || die "Use either --user or --system."; SCOPE=user; SCOPE_EXPLICIT=1 ;;
+      --system) [[ -z "$SCOPE" || "$SCOPE" == system ]] || die "Use either --user or --system."; SCOPE=system; SCOPE_EXPLICIT=1 ;;
+      --install-dir) need_value "$@"; shift; INSTALL_DIR="$1" ;;
+      --service) [[ "$SERVICE_CHOICE" != 0 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=1 ;;
+      --no-service) [[ "$SERVICE_CHOICE" != 1 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=0 ;;
+      --desktop) DESKTOP_CHOICE=1 ;;
+      --no-desktop) DESKTOP_CHOICE=0 ;;
+      --port) need_value "$@"; shift; APP_PORT="$1"; APP_PORT_EXPLICIT=1 ;;
+      --gateway-port) need_value "$@"; shift; GATEWAY_PORT="$1"; GATEWAY_PORT_EXPLICIT=1 ;;
+      --repo) need_value "$@"; shift; REPO="$1" ;;
+      --branch) need_value "$@"; shift; BRANCH="$1"; BRANCH_EXPLICIT=1 ;;
+      --tag) need_value "$@"; shift; TAG="$1" ;;
+      --admin-user) need_value "$@"; shift; ADMIN_USER="$1" ;;
+      --admin-email) need_value "$@"; shift; ADMIN_EMAIL="$1" ;;
+      --admin-password) need_value "$@"; shift; ADMIN_PASSWORD="$1"; ADMIN_PASSWORD_SUPPLIED=1 ;;
+      --generate-admin-password) ADMIN_PASSWORD_GENERATED=1 ;;
       --keep-config) KEEP_CONFIG=1 ;;
+      --keep-data) KEEP_DATA=1 ;;
       --keep-logs) KEEP_LOGS=1 ;;
       --help|-h) usage; exit 0 ;;
-      *) abort "Unknown argument: $1" ;;
+      *) die "Unknown argument: $1" ;;
     esac
     shift
   done
-
-  [[ -z "$BRANCH_NAME" || -z "$TAG_NAME" ]] || abort "Use either --branch or --tag, not both."
-  [[ "$DO_UPDATE" -eq 0 || "$DO_UNINSTALL" -eq 0 ]] || abort "Use either --update or --uninstall, not both."
-  validate_port "$APP_PORT" "--port"
-  validate_port "$GATEWAY_PORT" "--gateway-port"
-  if [[ "$SILENT" -eq 1 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
-    abort "--silent requires --yes unless --dry-run is used."
-  fi
+}
+valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
+validate_path_text() { [[ "$1" != *$'\n'* && "$1" != *$'\r'* && "$1" != *$'\0'* ]] || die "Path contains a forbidden control character."; }
+validate_arguments() {
+  [[ "$(uname -s)" == Linux || "$DRY_RUN" -eq 1 ]] || die "This installer supports Linux only."
+  valid_port "$APP_PORT" || die "--port must be an integer from 1 to 65535."
+  valid_port "$GATEWAY_PORT" || die "--gateway-port must be an integer from 1 to 65535."
+  [[ "$APP_PORT" != "$GATEWAY_PORT" ]] || die "HTTP and SSH gateway ports must differ."
+  [[ -z "$TAG" || "$BRANCH_EXPLICIT" -eq 0 ]] || die "Use either --branch or --tag, not both."
+  [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ && "$BRANCH" != *..* ]] || die "Invalid branch name."
+  [[ -z "$TAG" || "$TAG" =~ ^[A-Za-z0-9._+-]+$ ]] || die "Invalid tag name."
+  [[ "$REPO" != *$'\n'* && "$REPO" =~ ^(https://|ssh://|git@|file://|/|\./|\.\./) ]] || die "--repo must be an HTTPS/SSH Git URL or a local path."
+  [[ "$LOCAL_AUTH_MODE" == os || "$LOCAL_AUTH_MODE" == database ]] || die "PAM_LOCAL_AUTH_MODE must be 'os' or 'database'."
+  [[ "$SILENT" -eq 0 || "$YES" -eq 1 || "$DRY_RUN" -eq 1 ]] || die "--silent requires --yes (except with --dry-run)."
+  [[ -z "$INSTALL_DIR" ]] || validate_path_text "$INSTALL_DIR"
+  if [[ -n "$ADMIN_USER" ]]; then [[ "$ADMIN_USER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]] || die "Invalid administrator username."; fi
+  if [[ -n "$ADMIN_EMAIL" ]]; then [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid administrator email."; fi
+  [[ "$ADMIN_PASSWORD" != *$'\n'* && "$ADMIN_PASSWORD" != *$'\r'* ]] || die "Administrator password cannot contain a newline."
 }
 
-validate_port() {
-  local port="$1"
-  local option="$2"
-  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) \
-    || abort "$option must be an integer between 1 and 65535."
-}
-
-generate_password() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 18
-  else
-    python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(27))
-PY
-  fi
-}
-
-is_system_install() {
-  [[ "$INSTALL_SCOPE" == "system" ]]
-}
-
-resolve_paths() {
-  if [[ -z "$INSTALL_SCOPE" ]]; then
-    INSTALL_SCOPE="system"
-  fi
-
-  if is_system_install; then
-    INSTALL_DIR="${INSTALL_DIR:-/opt/algen-pam}"
-    BIN_PATH="/usr/local/bin/algen-pam"
-    CONFIG_DIR="/etc/algen-pam"
-    LOG_DIR="/var/log/algen-pam"
-    DESKTOP_FILE="/usr/local/share/applications/algen-pam.desktop"
-    SERVICE_FILE="/etc/systemd/system/algen-pam.service"
-    SYSTEMD_USER=0
-  else
-    INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/algen-pam}"
-    BIN_PATH="$HOME/.local/bin/algen-pam"
-    CONFIG_DIR="$HOME/.config/algen-pam"
-    LOG_DIR="$HOME/.local/state/algen-pam/logs"
-    DESKTOP_FILE="$HOME/.local/share/applications/algen-pam.desktop"
-    SERVICE_FILE="$HOME/.config/systemd/user/algen-pam.service"
-    SYSTEMD_USER=1
-  fi
-
-  DATA_DIR="$INSTALL_DIR/data"
-  CONFIG_FILE="$CONFIG_DIR/.env"
-  LOG_FILE="$LOG_DIR/install.log"
-}
-
-configured_value() {
-  local key="$1"
-  [[ -f "$CONFIG_FILE" ]] || return 1
-  sed -n "s/^${key}=//p" "$CONFIG_FILE" | tail -n 1
-}
-
-load_configured_ports() {
-  local configured=""
-  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then
-    configured="$(configured_value "ALGEN_PAM_PORT" || true)"
-    [[ -z "$configured" ]] || APP_PORT="$configured"
-  fi
-  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then
-    configured="$(configured_value "PAM_GATEWAY_PORT" || true)"
-    [[ -z "$configured" ]] || GATEWAY_PORT="$configured"
-  fi
-  validate_port "$APP_PORT" "configured HTTP port"
-  validate_port "$GATEWAY_PORT" "configured gateway port"
-}
-
-port_in_use() {
-  local port="$1"
-  if command -v ss >/dev/null 2>&1; then
-    ss -H -ltn 2>/dev/null | awk -v port="$port" '
-      { address=$4; sub(/^.*:/, "", address); if (address == port) found=1 }
-      END { exit(found ? 0 : 1) }
-    '
-    return $?
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -q .
-    return $?
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "$port" <<'PY'
-import socket
-import sys
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    sock.bind(("0.0.0.0", int(sys.argv[1])))
-except OSError:
-    raise SystemExit(0)
-finally:
-    sock.close()
-raise SystemExit(1)
-PY
-    return $?
-  fi
-  log "Warning: cannot check port $port because ss, lsof, and python3 are unavailable."
-  return 1
-}
-
-find_available_port() {
-  local start="$1"
-  local candidate="$start"
-  local reserved="${2:-0}"
-  while (( candidate <= 65535 )); do
-    if [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
+# ---- user, privileges, paths, and installation detection ------------------
+passwd_home() { getent passwd "$1" 2>/dev/null | awk -F: '{print $6; exit}'; }
+resolve_identity() {
+  if [[ -z "$SCOPE" ]]; then SCOPE=system; fi
+  if [[ "$SCOPE" == user ]]; then
+    if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+      die "Do not run a --user installation through sudo; rerun it as ${SUDO_USER}."
     fi
-    ((candidate += 1))
-  done
-  candidate=1024
-  while (( candidate < start && candidate <= 65535 )); do
-    if [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-    ((candidate += 1))
-  done
-  abort "No free TCP port found."
-}
-
-choose_port() {
-  local label="$1"
-  local current="$2"
-  local reserved="${3:-0}"
-  local output_var="$4"
-  local candidate="$current"
-
-  if [[ "$current" -eq "$reserved" ]] || port_in_use "$current"; then
-    candidate="$(find_available_port "$((current + 1))" "$reserved")"
-    if [[ "$SILENT" -eq 1 ]]; then
-      log "$label port $current is already in use; selecting available port $candidate."
-    else
-      while true; do
-        candidate="$(ui_input "Port conflict" "$label port $current is already in use. Choose another port" "$candidate")"
-        if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate >= 1 && candidate <= 65535 )) \
-          && [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
-          break
-        fi
-        ui_msg "Port conflict" "Port $candidate is invalid or already in use."
-        candidate="$(find_available_port "$((current + 1))" "$reserved")"
-      done
-    fi
-  fi
-  printf -v "$output_var" '%s' "$candidate"
-}
-
-choose_ports() {
-  [[ "$PORTS_CHECKED" -eq 0 ]] || return 0
-  choose_port "HTTP" "$APP_PORT" "$GATEWAY_PORT" APP_PORT
-  choose_port "SSH gateway" "$GATEWAY_PORT" "$APP_PORT" GATEWAY_PORT
-  APP_PORT_EXPLICIT=1
-  GATEWAY_PORT_EXPLICIT=1
-  PORTS_CHECKED=1
-}
-
-sudo_cmd() {
-  if is_system_install; then
-    command -v sudo >/dev/null 2>&1 || abort "System installation requires sudo."
-    sudo "$@"
+    [[ "$(id -u)" -ne 0 ]] || die "A --user installation as root is ambiguous; use --system or a non-root account."
+    TARGET_USER="$(id -un)"; TARGET_HOME="${HOME:-$(passwd_home "$TARGET_USER")}"; TARGET_GROUP="$(id -gn "$TARGET_USER")"
+    [[ "$TARGET_HOME" == /* && "$TARGET_HOME" != / ]] || die "HOME must be a safe absolute path for a user installation."
   else
-    "$@"
-  fi
-}
-
-run() {
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] $*"
-    return 0
-  fi
-  [[ "$VERBOSE" -eq 1 ]] && echo "+ $*"
-  "$@"
-}
-
-run_privileged() {
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] $(is_system_install && printf 'sudo ')$*"
-    return 0
-  fi
-  if is_system_install; then
-    [[ "$VERBOSE" -eq 1 ]] && echo "+ sudo $*"
-    sudo_cmd "$@"
-  else
-    [[ "$VERBOSE" -eq 1 ]] && echo "+ $*"
-    "$@"
-  fi
-}
-
-run_system_package_command() {
-  if [[ "$DRY_RUN" -eq 1 ]]; then
     if [[ "$(id -u)" -eq 0 ]]; then
-      echo "[dry-run] $*"
+      TARGET_USER="${SUDO_USER:-algen-pam}"
     else
-      echo "[dry-run] sudo $*"
+      TARGET_USER="$(id -un)"
     fi
-    return 0
+    TARGET_HOME="$(passwd_home "$TARGET_USER" || true)"; TARGET_GROUP="$(id -gn "$TARGET_USER" 2>/dev/null || printf '%s' "$TARGET_USER")"
   fi
-  if [[ "$(id -u)" -eq 0 ]]; then
-    [[ "$VERBOSE" -eq 1 ]] && echo "+ $*"
-    "$@"
+  [[ "$SCOPE" != user || -n "$TARGET_HOME" ]] || die "Cannot resolve home directory for $TARGET_USER."
+}
+resolve_paths() {
+  if [[ "$SCOPE" == system ]]; then
+    INSTALL_DIR="${INSTALL_DIR:-/opt/algen-pam}"
+    CONFIG_DIR=/etc/algen-pam; LOG_DIR=/var/log/algen-pam; BIN_PATH=/usr/local/bin/algen-pam
+    SERVICE_FILE=/etc/systemd/system/algen-pam.service; DESKTOP_FILE=/usr/local/share/applications/algen-pam.desktop; SYSTEMD_USER=0
   else
-    command -v sudo >/dev/null 2>&1 || abort "Installing system dependencies requires sudo."
-    [[ "$VERBOSE" -eq 1 ]] && echo "+ sudo $*"
-    sudo "$@"
+    INSTALL_DIR="${INSTALL_DIR:-$TARGET_HOME/.local/share/algen-pam}"
+    CONFIG_DIR="$TARGET_HOME/.config/algen-pam"; LOG_DIR="$TARGET_HOME/.local/state/algen-pam/logs"; BIN_PATH="$TARGET_HOME/.local/bin/algen-pam"
+    SERVICE_FILE="$TARGET_HOME/.config/systemd/user/algen-pam.service"; DESKTOP_FILE="$TARGET_HOME/.local/share/applications/algen-pam.desktop"; SYSTEMD_USER=1
+  fi
+  [[ "$INSTALL_DIR" == /* ]] || die "Installation path must be absolute after expansion: $INSTALL_DIR"
+  [[ "$INSTALL_DIR" != / && "$INSTALL_DIR" != /etc && "$INSTALL_DIR" != /usr && "$INSTALL_DIR" != /var && "$INSTALL_DIR" != "$TARGET_HOME" ]] || die "Unsafe installation path: $INSTALL_DIR"
+  DATA_DIR="$INSTALL_DIR/data"; CONFIG_FILE="$CONFIG_DIR/.env"; LOG_FILE="$LOG_DIR/install.log"
+}
+marker_valid() {
+  local marker="$INSTALL_DIR/.algen-pam-install"
+  [[ -f "$marker" && ! -L "$marker" ]] || return 1
+  grep -qx 'app=algen-pam' "$marker" && grep -Fqx "install_dir=$INSTALL_DIR" "$marker"
+}
+installation_present() { marker_valid && [[ -d "$INSTALL_DIR/backend" ]]; }
+detect_existing_scope() {
+  [[ -n "$SCOPE" ]] && return 0
+  if [[ -f /opt/algen-pam/.algen-pam-install ]]; then SCOPE=system
+  elif [[ -n "${HOME:-}" && -f "$HOME/.local/share/algen-pam/.algen-pam-install" ]]; then SCOPE=user
+  else SCOPE=system
   fi
 }
-
-log() {
-  local line
-  line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-  echo "$line"
-  if [[ -n "$LOG_FILE" && "$DRY_RUN" -eq 0 && -d "$(dirname "$LOG_FILE")" ]]; then
-    printf '%s\n' "$line" >>"$LOG_FILE" || true
+determine_mode() {
+  if [[ -z "$MODE" ]]; then
+    if installation_present; then MODE=update
+    elif marker_valid; then MODE=reinstall
+    else MODE=install; fi
   fi
-}
-
-confirm() {
-  local prompt="$1"
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    return 0
-  fi
-  [[ "$SILENT" -eq 0 ]] || abort "$prompt Use --yes to accept in silent mode."
-  read -r -p "$prompt [y/N] " answer
-  [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" || "$answer" == "YES" ]]
-}
-
-ensure_admin_settings() {
-  if [[ "$DO_UNINSTALL" -eq 1 ]]; then
-    return 0
-  fi
-  if [[ "$DO_UPDATE" -eq 1 && "$ADMIN_PASSWORD_SUPPLIED" -eq 0 ]]; then
-    ADMIN_BOOTSTRAP=0
-    return 0
-  fi
-  if [[ -z "$ADMIN_PASSWORD" ]]; then
-    ADMIN_PASSWORD="$(generate_password)"
-    ADMIN_PASSWORD_GENERATED=1
-  fi
-  if [[ "${#ADMIN_PASSWORD}" -lt 6 ]]; then
-    abort "Admin password must have at least 6 characters."
-  fi
-  [[ -n "$ADMIN_USER" ]] || abort "Admin username cannot be empty."
-  [[ -n "$ADMIN_EMAIL" ]] || abort "Admin email cannot be empty."
-  if [[ "$LOCAL_AUTH_MODE" == "os" && "$DRY_RUN" -eq 0 ]] && ! id "$ADMIN_USER" >/dev/null 2>&1; then
-    abort "Linux operating-system account '$ADMIN_USER' does not exist. Create it first or choose an existing account."
-  fi
-}
-
-detect_package_manager() {
-  if command -v apt-get >/dev/null 2>&1; then
-    PACKAGE_MANAGER="apt"
-  elif command -v dnf >/dev/null 2>&1; then
-    PACKAGE_MANAGER="dnf"
-  elif command -v pacman >/dev/null 2>&1; then
-    PACKAGE_MANAGER="pacman"
-  else
-    PACKAGE_MANAGER=""
-  fi
-}
-
-package_list() {
-  case "$PACKAGE_MANAGER" in
-    apt) echo "python3 python3-venv python3-pip curl ca-certificates tar libpam0g" ;;
-    dnf) echo "python3 python3-pip curl ca-certificates tar pam" ;;
-    pacman) echo "python python-pip curl ca-certificates tar pam" ;;
-    *) echo "" ;;
+  case "$MODE" in
+    install) marker_valid && die "An installation marker already exists; use --update or --reinstall." ;;
+    update|backup|remove-app|uninstall) installation_present || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode '$MODE' requires a valid installation marker in $INSTALL_DIR."; } ;;
+    reinstall) marker_valid || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode 'reinstall' requires a valid installation marker in $INSTALL_DIR."; } ;;
   esac
 }
-
-install_command_for_packages() {
-  local packages="$1"
-  case "$PACKAGE_MANAGER" in
-    apt) echo "sudo apt-get update && sudo apt-get install -y $packages" ;;
-    dnf) echo "sudo dnf install -y $packages" ;;
-    pacman) echo "sudo pacman -Sy --needed --noconfirm $packages" ;;
-    *) echo "" ;;
-  esac
+require_privileges() {
+  [[ "$SCOPE" == user || "$(id -u)" -eq 0 || -x "$(command -v sudo 2>/dev/null || true)" ]] || die "System mode requires root or sudo."
 }
-
-check_system() {
-  log "Checking Linux system and dependencies."
-  [[ "$(uname -s)" == "Linux" ]] || abort "This installer is intended for Linux."
-  detect_package_manager
-  [[ -n "$PACKAGE_MANAGER" ]] || abort "Unsupported distribution: apt, dnf, or pacman is required."
-
-  if command -v python3 >/dev/null 2>&1; then
-    local py_version
-    py_version="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
-    log "Found Python $py_version."
-    python3 - <<'PY' || log "Warning: Python 3.12 is recommended by the project documentation."
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
-PY
-  fi
+as_root() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then printf '[dry-run] root:'; printf ' %q' "$@"; printf '\n'; return 0; fi
+  if [[ "$(id -u)" -eq 0 ]]; then "$@"; else sudo -- "$@"; fi
 }
+run() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then printf '[dry-run]'; printf ' %q' "$@"; printf '\n'; return 0; fi
+  debug "Executing: $(printf '%q ' "$@")"; "$@"
+}
+target_cmd() { if [[ "$SCOPE" == system ]]; then as_root "$@"; else run "$@"; fi; }
 
+# ---- system detection and dependencies ------------------------------------
+python_ok() { command -v python3 >/dev/null 2>&1 && python3 -c "import sys; raise SystemExit(sys.version_info < (3,$REQUIRED_PYTHON_MINOR))"; }
+venv_ok() { python_ok && { local d; d="$(mktemp -d)"; python3 -m venv "$d/v" >/dev/null 2>&1; local s=$?; rm -rf "$d"; return $s; }; }
+detect_pm() {
+  if command -v apt-get >/dev/null; then printf apt
+  elif command -v dnf >/dev/null; then printf dnf
+  elif command -v pacman >/dev/null; then printf pacman
+  elif command -v zypper >/dev/null; then printf zypper
+  else printf none; fi
+}
+missing_dependencies() {
+  local missing=() cmd
+  python_ok || missing+=(python3.12)
+  venv_ok || missing+=(venv)
+  for cmd in tar openssl; do command -v "$cmd" >/dev/null || missing+=("$cmd"); done
+  { command -v curl >/dev/null || command -v wget >/dev/null; } || missing+=(curl)
+  if [[ "$REPO" =~ ^(ssh://|git@) ]]; then command -v git >/dev/null || missing+=(git); fi
+  [[ "$SERVICE_CHOICE" != 1 ]] || command -v systemctl >/dev/null || missing+=(systemctl)
+  printf '%s\n' "${missing[@]}"
+}
 install_dependencies() {
-  local missing=()
-  command -v python3 >/dev/null 2>&1 || missing+=("python3")
-  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || missing+=("curl")
-  command -v tar >/dev/null 2>&1 || missing+=("tar")
-
-  if [[ "${#missing[@]}" -eq 0 ]] \
-    && python3 -m venv --help >/dev/null 2>&1 \
-    && python3 -c 'import ensurepip' >/dev/null 2>&1 \
-    && python3 -c 'from ctypes.util import find_library; raise SystemExit(0 if find_library("pam") else 1)' >/dev/null 2>&1; then
-    log "System dependencies look ready."
-    return 0
-  fi
-
-  local packages
-  packages="$(package_list)"
-  [[ -n "$packages" ]] || abort "Cannot install dependencies automatically on this system."
-  local manual_cmd
-  manual_cmd="$(install_command_for_packages "$packages")"
-
-  if confirm "Install missing system dependencies using $PACKAGE_MANAGER?"; then
-    case "$PACKAGE_MANAGER" in
-      apt)
-        run_system_package_command apt-get update
-        run_system_package_command apt-get install -y $packages
-        ;;
-      dnf) run_system_package_command dnf install -y $packages ;;
-      pacman) run_system_package_command pacman -Sy --needed --noconfirm $packages ;;
-    esac
-  else
-    abort "Install dependencies manually and rerun: $manual_cmd"
-  fi
-}
-
-ui_msg() {
-  local title="$1"
-  local message="$2"
-  if command -v whiptail >/dev/null 2>&1; then
-    whiptail --title "$title" --msgbox "$message" 12 72
-  elif command -v dialog >/dev/null 2>&1; then
-    dialog --title "$title" --msgbox "$message" 12 72
-  else
-    printf '\n%s\n%s\n\n' "$title" "$message"
-  fi
-}
-
-ui_yesno() {
-  local title="$1"
-  local message="$2"
-  if command -v whiptail >/dev/null 2>&1; then
-    whiptail --title "$title" --yesno "$message" 12 72
-  elif command -v dialog >/dev/null 2>&1; then
-    dialog --title "$title" --yesno "$message" 12 72
-  else
-    read -r -p "$message [y/N] " answer
-    [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" || "$answer" == "YES" ]]
-  fi
-}
-
-ui_input() {
-  local title="$1"
-  local message="$2"
-  local default="$3"
-  if command -v whiptail >/dev/null 2>&1; then
-    whiptail --title "$title" --inputbox "$message" 12 72 "$default" 3>&1 1>&2 2>&3
-  elif command -v dialog >/dev/null 2>&1; then
-    dialog --title "$title" --inputbox "$message" 12 72 "$default" 3>&1 1>&2 2>&3
-  else
-    read -r -p "$message [$default] " answer
-    printf '%s\n' "${answer:-$default}"
-  fi
-}
-
-ui_password() {
-  local title="$1"
-  local message="$2"
-  if command -v whiptail >/dev/null 2>&1; then
-    whiptail --title "$title" --passwordbox "$message" 12 72 3>&1 1>&2 2>&3
-  elif command -v dialog >/dev/null 2>&1; then
-    dialog --title "$title" --passwordbox "$message" 12 72 3>&1 1>&2 2>&3
-  else
-    local answer
-    read -r -s -p "$message " answer
-    printf '\n' >&2
-    printf '%s\n' "$answer"
-  fi
-}
-
-ui_choose_scope() {
-  if command -v whiptail >/dev/null 2>&1; then
-    whiptail --title "Installation mode" --menu "Choose installation scope" 15 72 2 \
-      system "System-wide (/opt, /etc, /usr/local/bin) [default]" \
-      user "Current user" 3>&1 1>&2 2>&3
-  elif command -v dialog >/dev/null 2>&1; then
-    dialog --title "Installation mode" --menu "Choose installation scope" 15 72 2 \
-      system "System-wide (/opt, /etc, /usr/local/bin) [default]" \
-      user "Current user" 3>&1 1>&2 2>&3
-  else
-    read -r -p "Install system-wide or for the current user? [system/user] " answer
-    [[ "$answer" == "user" ]] && printf 'user\n' || printf 'system\n'
-  fi
-}
-
-installation_present() {
-  [[ -f "$INSTALL_DIR/.algen-pam-install" ]] \
-    || { [[ -f "$CONFIG_FILE" ]] && [[ -e "$BIN_PATH" || -f "$SERVICE_FILE" ]]; }
-}
-
-detect_installed_scope() {
-  [[ -z "$INSTALL_SCOPE" && -z "$INSTALL_DIR" ]] || return 0
-  if [[ -f "$HOME/.local/share/algen-pam/.algen-pam-install" ]] \
-    || { [[ -f "$HOME/.config/algen-pam/.env" ]] && [[ -e "$HOME/.local/bin/algen-pam" ]]; }; then
-    INSTALL_SCOPE="user"
-  elif [[ -f "/opt/algen-pam/.algen-pam-install" ]] \
-    || { [[ -f "/etc/algen-pam/.env" ]] && [[ -e "/usr/local/bin/algen-pam" ]]; }; then
-    INSTALL_SCOPE="system"
-  fi
-}
-
-choose_existing_install_action() {
-  local action=""
-  printf '\nExisting %s installation detected in %s.\n\n' "$APP_TITLE" "$INSTALL_DIR"
-  cat <<'EOF'
-Choose action (automatic update starts after 5 seconds):
-  1) Update application (backup and keep config)
-  2) Reinstall application (clean app files; keep config, data, and logs)
-  3) Backup config only
-  4) Remove app (keep config, data, and logs)
-  5) Remove app and all files
-  6) Abort
-EOF
-  if ! read -r -t 5 -p "Action [1] (auto update in 5s): " action; then
-    printf '\n'
-    action="1"
-  fi
-  action="${action:-1}"
-  while [[ ! "$action" =~ ^[1-6]$ ]]; do
-    read -r -p "Choose an action from 1 to 6: " action
-  done
-
-  case "$action" in
-    1) INSTALL_ACTION="update"; DO_UPDATE=1 ;;
-    2) INSTALL_ACTION="reinstall"; DO_UPDATE=1; REINSTALL_APP=1 ;;
-    3) INSTALL_ACTION="backup" ;;
-    4) INSTALL_ACTION="remove_keep" ;;
-    5) INSTALL_ACTION="remove_all"; DO_UNINSTALL=1 ;;
-    6) abort "No changes were made." ;;
+  local -a missing=(); mapfile -t missing < <(missing_dependencies)
+  [[ ${#missing[@]} -gt 0 && -n "${missing[0]}" ]] || return 0
+  local pm; pm="$(detect_pm)"; [[ "$pm" != none ]] || die "Missing dependencies: ${missing[*]}; unsupported package manager."
+  info "Installing missing system dependencies: ${missing[*]}"
+  local -a packages=()
+  case "$pm" in
+    apt) packages=(python3.12 python3.12-venv python3-pip curl ca-certificates tar git openssl libpam0g); as_root apt-get update; as_root apt-get install -y "${packages[@]}" ;;
+    dnf) packages=(python3.12 python3-pip curl ca-certificates tar git openssl pam); as_root dnf install -y "${packages[@]}" ;;
+    pacman) packages=(python python-pip curl ca-certificates tar git openssl pam); as_root pacman -Sy --needed --noconfirm "${packages[@]}" ;;
+    zypper) packages=(python312 python312-pip curl ca-certificates tar git openssl pam); as_root zypper --non-interactive install "${packages[@]}" ;;
   esac
-  ASSUME_YES=1
+  python_ok && venv_ok || die "Python 3.12 with venv is required and could not be prepared."
 }
 
-ui_flow() {
-  if [[ ! -t 0 ]]; then
-    [[ "$DRY_RUN" -eq 1 ]] && return 0
-    abort "No interactive terminal detected. Use --silent --yes."
-  fi
-
-  ui_msg "Welcome" "This installer will install $APP_TITLE from $REPO_URL."
-  check_system
-  if [[ -z "$INSTALL_SCOPE" ]]; then
-    INSTALL_SCOPE="$(ui_choose_scope)"
-  fi
-  resolve_paths
-  INSTALL_DIR="$(ui_input "Install directory" "Choose installation directory" "$INSTALL_DIR")"
-  resolve_paths
-  if installation_present; then
-    choose_existing_install_action
-    return 0
-  fi
-  ADMIN_USER="$(ui_input "Admin account" "Linux operating-system username for the application administrator" "$ADMIN_USER")"
-  ADMIN_EMAIL="$(ui_input "Admin account" "Admin email" "$ADMIN_EMAIL")"
-  if [[ "$LOCAL_AUTH_MODE" == "database" ]]; then
-    ADMIN_PASSWORD="$(ui_password "Admin account" "Application password. Leave empty to generate one.")"
+# ---- UI -------------------------------------------------------------------
+have_tty() { [[ -t 0 || -r /dev/tty ]]; }
+ui_menu() {
+  local result=""
+  if command -v whiptail >/dev/null && have_tty; then
+    result=$(whiptail --title "Algen PAM" --menu "Existing installation detected" 18 72 6 \
+      1 "Update application" 2 "Reinstall application" 3 "Back up configuration" \
+      4 "Remove application, preserve data" 5 "Remove everything" 6 "Cancel" 3>&1 1>&2 2>&3) || return 1
+  elif command -v dialog >/dev/null && have_tty; then
+    result=$(dialog --stdout --title "Algen PAM" --menu "Existing installation detected" 18 72 6 \
+      1 "Update application" 2 "Reinstall application" 3 "Back up configuration" \
+      4 "Remove application, preserve data" 5 "Remove everything" 6 "Cancel") || return 1
   else
-    ADMIN_PASSWORD=""
+    have_tty || die "No interactive terminal. Use --silent --yes and an explicit mode."
+    printf '%s\n' '1) Update application' '2) Reinstall application' '3) Back up configuration' \
+      '4) Remove application, preserve data' '5) Remove everything' '6) Cancel' >/dev/tty
+    read -r -p 'Choice [1-6]: ' result </dev/tty || return 1
   fi
-  if [[ -z "$ADMIN_PASSWORD" ]]; then
-    ADMIN_PASSWORD="$(generate_password)"
-    [[ "$LOCAL_AUTH_MODE" == "database" ]] && ADMIN_PASSWORD_GENERATED=1
-  else
-    ADMIN_PASSWORD_SUPPLIED=1
-    UPDATE_ADMIN_PASSWORD=1
-  fi
-  CREATE_SERVICE=0
-  CREATE_DESKTOP=0
-  if ui_yesno "systemd" "Create and enable a systemd service?"; then
-    CREATE_SERVICE=1
-  fi
-  if ui_yesno "Desktop launcher" "Create a .desktop launcher for the web UI?"; then
-    CREATE_DESKTOP=1
-  fi
-  resolve_paths
-  load_configured_ports
-  choose_ports
-  local summary
-  summary="Scope: $INSTALL_SCOPE
-Install dir: $INSTALL_DIR
-Config dir: $CONFIG_DIR
-Log file: $LOG_FILE
-HTTP port: $APP_PORT
-SSH gateway port: $GATEWAY_PORT
-Admin user: $ADMIN_USER <$ADMIN_EMAIL>
-Local authentication mode: $LOCAL_AUTH_MODE
-systemd service: $CREATE_SERVICE
-Desktop launcher: $CREATE_DESKTOP"
-  ui_msg "Summary" "$summary"
-  ui_yesno "Confirm" "Start installation now?" || abort "Installation cancelled."
-  ASSUME_YES=1
+  case "$result" in 1) MODE=update;; 2) MODE=reinstall;; 3) MODE=backup;; 4) MODE=remove-app;; 5) MODE=uninstall;; 6) return 1;; *) return 1;; esac
 }
-
-run_interactive_installer() {
-  if [[ -t 0 ]]; then
-    ui_flow
-    return 0
-  fi
-  if [[ -c /dev/tty ]] && { exec 9</dev/tty; } 2>/dev/null; then
-    ui_flow <&9
-    exec 9<&-
-    return 0
-  fi
-  abort "No interactive terminal detected. Use --silent --yes."
+interactive_mode_selection() {
+  [[ "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE_EXPLICIT" -eq 0 && $(marker_valid; echo $?) -eq 0 ]] || return 0
+  ui_menu || die "Operation cancelled by user."
 }
-
-prepare_logging() {
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] log file: $LOG_FILE"
-    return 0
-  fi
-  run_privileged mkdir -p "$LOG_DIR"
-  run_privileged touch "$LOG_FILE"
-  if is_system_install; then
-    run_privileged chown "$INSTALL_OWNER" "$LOG_FILE"
-  fi
-  log "Logging to $LOG_FILE."
-}
-
-prepare_directories() {
-  log "Preparing installation directories."
-  run_privileged mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" "$DATA_DIR" "$(dirname "$BIN_PATH")"
-  if [[ "$CREATE_DESKTOP" == "1" ]]; then
-    run_privileged mkdir -p "$(dirname "$DESKTOP_FILE")"
-  fi
-  if [[ "$SYSTEMD_USER" -eq 1 && "$CREATE_SERVICE" == "1" ]]; then
-    run mkdir -p "$(dirname "$SERVICE_FILE")"
-  fi
-  if is_system_install; then
-    run_privileged chown -R "$INSTALL_OWNER" "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR"
-  fi
-}
-
-archive_url() {
-  local ref_kind="heads"
-  local ref_name="${BRANCH_NAME:-$DEFAULT_BRANCH}"
-  if [[ -n "$TAG_NAME" ]]; then
-    ref_kind="tags"
-    ref_name="$TAG_NAME"
-  fi
-  local clean_repo="${REPO_URL%.git}"
-  printf '%s/archive/refs/%s/%s.tar.gz\n' "$clean_repo" "$ref_kind" "$ref_name"
-}
-
-download_archive() {
-  local url
-  url="$(archive_url)"
-  local tmp_archive
-  tmp_archive="$(mktemp)"
-  log "Downloading the latest source archive from $url (git clone is not used)."
-  if command -v curl >/dev/null 2>&1; then
-    run curl -fsSL -H "Cache-Control: no-cache" "$url" -o "$tmp_archive"
-  elif command -v wget >/dev/null 2>&1; then
-    run wget -q --no-cache "$url" -O "$tmp_archive"
-  else
-    abort "curl or wget is required to download source archives."
-  fi
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  run tar -tzf "$tmp_archive" >/dev/null
-  run tar -xzf "$tmp_archive" -C "$tmp_dir"
-  local extracted
-  extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  [[ -n "$extracted" ]] || abort "Downloaded archive did not contain a source directory."
-  deploy_source "$extracted"
-  run rm -f "$tmp_archive"
-  run rm -rf "$tmp_dir"
-}
-
-deploy_source() {
-  local source_dir="$1"
-  if [[ "$DO_UPDATE" -eq 1 || "$REINSTALL_APP" -eq 1 ]]; then
-    clean_application_files_keep_data
-  fi
-  run mkdir -p "$INSTALL_DIR"
-  run cp -a "$source_dir"/. "$INSTALL_DIR"/
-}
-
-copy_local_source() {
-  local source_dir="$1"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  local staged="$tmp_dir/source"
-  mkdir -p "$staged"
-  tar -C "$source_dir" \
-    --exclude='./.git' \
-    --exclude='./.env' \
-    --exclude='./data' \
-    --exclude='./backend/.venv' \
-    --exclude='*/__pycache__' \
-    --exclude='*/.pytest_cache' \
-    -cf - . | tar -C "$staged" -xf -
-  deploy_source "$staged"
-  rm -rf "$tmp_dir"
-}
-
-fetch_source() {
-  log "Fetching the latest application source without git clone."
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] download latest archive from $(archive_url) into $INSTALL_DIR"
-    return 0
-  fi
-  local local_source="${REPO_URL#file://}"
-  if [[ -d "$local_source" ]]; then
-    log "Using local source directory $local_source without copying Git metadata."
-    copy_local_source "$local_source"
-  else
-    download_archive
-  fi
-}
-
-set_env_value() {
-  local file="$1"
-  local key="$2"
-  local value="$3"
-  local escaped
-  escaped="$(printf '%s' "$value" | sed 's/[&|\\]/\\&/g')"
-  if grep -q "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
-  else
-    printf '%s=%s\n' "$key" "$value" >>"$file"
-  fi
-}
-
-configure_app() {
-  log "Preparing configuration."
-  local config_created=0
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] create or preserve $CONFIG_FILE"
-    echo "[dry-run] link $INSTALL_DIR/.env -> $CONFIG_FILE"
-    return 0
-  fi
-
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    config_created=1
-    if [[ -f "$INSTALL_DIR/.env.example" ]]; then
-      cp "$INSTALL_DIR/.env.example" "$CONFIG_FILE"
+interactive_install_wizard() {
+  [[ "$SILENT" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
+  marker_valid && return 0
+  have_tty || die "No interactive terminal. Use --silent --yes with explicit options."
+  local choice=""
+  if [[ "$SCOPE_EXPLICIT" -eq 0 ]]; then
+    if command -v whiptail >/dev/null; then
+      choice=$(whiptail --title "Algen PAM" --menu "Choose installation scope" 14 68 2 1 "System-wide (/opt/algen-pam)" 2 "Current user" 3>&1 1>&2 2>&3) || die "Operation cancelled."
+    elif command -v dialog >/dev/null; then
+      choice=$(dialog --stdout --title "Algen PAM" --menu "Choose installation scope" 14 68 2 1 "System-wide (/opt/algen-pam)" 2 "Current user") || die "Operation cancelled."
     else
-      touch "$CONFIG_FILE"
+      printf '%s\n' '1) System-wide (/opt/algen-pam)' '2) Current user' >/dev/tty
+      read -r -p 'Scope [1-2]: ' choice </dev/tty || die "Operation cancelled."
     fi
-    set_env_value "$CONFIG_FILE" "DATABASE_URL" "sqlite:///$DATA_DIR/pam_lite.db"
-    set_env_value "$CONFIG_FILE" "PAM_GATEWAY_HOST_KEY_PATH" "$DATA_DIR/gateway_host_key"
-    if ! grep -q '^SECRET_KEY=change-me$' "$CONFIG_FILE"; then
-      :
-    elif command -v openssl >/dev/null 2>&1; then
-      set_env_value "$CONFIG_FILE" "SECRET_KEY" "$(openssl rand -hex 32)"
+    case "$choice" in 1) SCOPE=system;; 2) SCOPE=user;; *) die "Invalid scope selection.";; esac
+    resolve_identity; resolve_paths
+  fi
+  if [[ -z "$SERVICE_CHOICE" ]]; then
+    if command -v whiptail >/dev/null; then
+      if whiptail --title "Algen PAM" --yesno "Create a systemd service?" 9 60; then SERVICE_CHOICE=1
+      else choice=$?; [[ "$choice" -eq 1 ]] && SERVICE_CHOICE=0 || die "Operation cancelled."; fi
+    elif command -v dialog >/dev/null; then
+      if dialog --title "Algen PAM" --yesno "Create a systemd service?" 9 60; then SERVICE_CHOICE=1
+      else choice=$?; [[ "$choice" -eq 1 ]] && SERVICE_CHOICE=0 || die "Operation cancelled."; fi
+    else
+      read -r -p 'Create a systemd service? [y/N]: ' choice </dev/tty || die "Operation cancelled."
+      [[ "$choice" =~ ^([yY]|[yY][eE][sS])$ ]] && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
     fi
-  else
-    log "Keeping existing config at $CONFIG_FILE."
   fi
-
-  set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_USER" "$ADMIN_USER"
-  set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_EMAIL" "$ADMIN_EMAIL"
-  set_env_value "$CONFIG_FILE" "PAM_LOCAL_AUTH_MODE" "$LOCAL_AUTH_MODE"
-  set_env_value "$CONFIG_FILE" "PAM_OS_PAM_SERVICE" "login"
-  set_env_value "$CONFIG_FILE" "PAM_OS_ADMIN_USERS" "$ADMIN_USER"
-  set_env_value "$CONFIG_FILE" "PAM_OS_AUTO_PROVISION" "true"
-  set_env_value "$CONFIG_FILE" "ALGEN_PAM_HOST" "$APP_HOST"
-  set_env_value "$CONFIG_FILE" "ALGEN_PAM_PORT" "$APP_PORT"
-  set_env_value "$CONFIG_FILE" "PAM_GATEWAY_PORT" "$GATEWAY_PORT"
-  if [[ "$config_created" -eq 1 ]]; then
-    set_env_value "$CONFIG_FILE" "PAM_OIDC_REDIRECT_URI" "http://localhost:$APP_PORT/auth/oidc/callback"
-  fi
-  if [[ "$config_created" -eq 1 || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 ]]; then
-    set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_PASSWORD" "$ADMIN_PASSWORD"
-  fi
-
-  rm -f "$INSTALL_DIR/.env"
-  ln -s "$CONFIG_FILE" "$INSTALL_DIR/.env"
-  touch "$INSTALL_DIR/.algen-pam-install"
 }
+confirm_summary() {
+  local ref_description="branch $BRANCH"
+  [[ -z "$TAG" ]] || ref_description="tag $TAG"
+  cat >&2 <<EOF
 
-build_app() {
-  log "Creating Python virtual environment and installing application dependencies."
-  [[ -f "$INSTALL_DIR/backend/requirements.txt" || "$DRY_RUN" -eq 1 ]] || abort "backend/requirements.txt not found in $INSTALL_DIR."
-  run python3 -m venv "$INSTALL_DIR/backend/.venv"
-  run "$INSTALL_DIR/backend/.venv/bin/python" -m pip install --upgrade pip
-  run "$INSTALL_DIR/backend/.venv/bin/pip" install -r "$INSTALL_DIR/backend/requirements.txt"
-}
-
-bootstrap_admin() {
-  [[ "$ADMIN_BOOTSTRAP" -eq 1 ]] || return 0
-  log "Creating or updating local admin account."
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] bootstrap admin account $ADMIN_USER <$ADMIN_EMAIL>"
-    return 0
-  fi
-  local update_args=()
-  [[ "$UPDATE_ADMIN_PASSWORD" -eq 1 ]] && update_args=(--update-password)
-  (
-    cd "$INSTALL_DIR/backend"
-    "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin \
-      --username "$ADMIN_USER" \
-      --email "$ADMIN_EMAIL" \
-      --password "$ADMIN_PASSWORD" \
-      "${update_args[@]}"
-  )
-}
-
-write_file_privileged() {
-  local target="$1"
-  local mode="$2"
-  local tmp
-  tmp="$(mktemp)"
-  cat >"$tmp"
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] write $target"
-    rm -f "$tmp"
-    return 0
-  fi
-  if is_system_install && [[ "$target" != "$INSTALL_DIR"* && "$target" != "$CONFIG_DIR"* && "$target" != "$LOG_DIR"* ]]; then
-    sudo_cmd install -m "$mode" "$tmp" "$target"
-  else
-    install -m "$mode" "$tmp" "$target"
-  fi
-  rm -f "$tmp"
-}
-
-create_launcher() {
-  log "Creating command launcher at $BIN_PATH."
-  write_file_privileged "$BIN_PATH" "0755" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "\${1:-}" == "--version" ]]; then
-  echo "$APP_NAME $APP_VERSION"
-  exit 0
-fi
-cd "$INSTALL_DIR/backend"
-exec "$INSTALL_DIR/backend/.venv/bin/uvicorn" app.main:app --host "\${ALGEN_PAM_HOST:-0.0.0.0}" --port "\${ALGEN_PAM_PORT:-$APP_PORT}" "\$@"
+Operation summary
+  mode:          $MODE
+  scope:         $SCOPE
+  install dir:   $INSTALL_DIR
+  config:        $CONFIG_FILE
+  data:          $DATA_DIR
+  source:        $REPO ($ref_description)
+  HTTP/gateway:  $APP_PORT / $GATEWAY_PORT
+  service:       $SERVICE_CHOICE
 EOF
+  [[ "$YES" -eq 1 || "$DRY_RUN" -eq 1 ]] && return 0
+  [[ "$SILENT" -eq 0 ]] || die "Silent mode cannot ask for confirmation; use --yes."
+  have_tty || die "No interactive terminal available for confirmation."
+  local answer; read -r -p "Proceed? [y/N]: " answer </dev/tty || die "Operation cancelled."
+  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Operation cancelled."
 }
 
-systemctl_cmd() {
-  if [[ "$SYSTEMD_USER" -eq 1 ]]; then
-    systemctl --user "$@"
+# ---- configuration ---------------------------------------------------------
+env_file_value() { [[ -f "$1" ]] && sed -n "s/^$2=//p" "$1" | tail -n1 | sed 's/^"//; s/"$//'; }
+configured_value() {
+  if [[ -r "$CONFIG_FILE" ]]; then env_file_value "$CONFIG_FILE" "$1"
+  elif [[ "$SCOPE" == system && -f "$CONFIG_FILE" ]]; then
+    sudo sed -n "s/^$1=//p" "$CONFIG_FILE" | tail -n1 | sed 's/^"//; s/"$//'
+  else return 1
+  fi
+}
+load_existing_configuration() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  local value
+  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then value="$(configured_value ALGEN_PAM_PORT || true)"; [[ -z "$value" ]] || APP_PORT="$value"; fi
+  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then value="$(configured_value PAM_GATEWAY_PORT || true)"; [[ -z "$value" ]] || GATEWAY_PORT="$value"; fi
+  [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(configured_value PAM_DEFAULT_ADMIN_USER || true)"
+  [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$(configured_value PAM_DEFAULT_ADMIN_EMAIL || true)"
+}
+set_env_value() {
+  local file="$1" key="$2" value="$3" tmp escaped
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "Unsafe environment key: $key"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "Environment value for $key contains a newline."
+  escaped=${value//\\/\\\\}; escaped=${escaped//\"/\\\"}; escaped=${escaped//\$/\\$}; escaped=${escaped//\`/\\\`}
+  tmp="$(mktemp "$(dirname "$file")/.env.tmp.XXXXXX")"
+  awk -v key="$key" -v replacement="$key=\"$escaped\"" '
+    BEGIN { done=0 } $0 ~ "^" key "=" { if (!done) print replacement; done=1; next } { print }
+    END { if (!done) print replacement }
+  ' "$file" >"$tmp"
+  chmod 0600 "$tmp"; mv -f "$tmp" "$file"
+}
+remove_env_value() {
+  local file="$1" key="$2" tmp; [[ -f "$file" ]] || return 0
+  tmp="$(mktemp "$(dirname "$file")/.env.tmp.XXXXXX")"; awk -v key="$key" '$0 !~ "^" key "="' "$file" >"$tmp"
+  chmod 0600 "$tmp"; mv -f "$tmp" "$file"
+}
+generate_secret() { openssl rand -hex "${1:-32}"; }
+prepare_config() {
+  target_cmd mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR" "$(dirname "$BIN_PATH")"
+  target_cmd chmod 0700 "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    target_cmd install -m 0600 "$STAGED_APP/.env.example" "$CONFIG_FILE"
+  fi
+  # Atomic editor must run as the owner of a user install. System installs are
+  # edited in place only after directories have been created by root.
+  local editor="$CONFIG_FILE"
+  if [[ "$SCOPE" == system && "$(id -u)" -ne 0 ]]; then
+    local local_copy="$STAGE_ROOT/config.env"; as_root cp "$CONFIG_FILE" "$local_copy"; as_root chown "$(id -u):$(id -g)" "$local_copy"; editor="$local_copy"
+  fi
+  local secret vault_secret
+  secret="$(env_file_value "$editor" SECRET_KEY 2>/dev/null || true)"
+  vault_secret="$(env_file_value "$editor" PAM_VAULT_MASTER_KEY 2>/dev/null || true)"
+  [[ -n "$secret" && "$secret" != change-me ]] || secret="$(generate_secret 32)"
+  [[ -n "$vault_secret" && "$vault_secret" != change-this-32-byte-key ]] || vault_secret="$(generate_secret 32)"
+  set_env_value "$editor" DATABASE_URL "sqlite:///$DATA_DIR/pam_lite.db"
+  set_env_value "$editor" SECRET_KEY "$secret"
+  set_env_value "$editor" PAM_VAULT_MASTER_KEY "$vault_secret"
+  set_env_value "$editor" PAM_GATEWAY_HOST_KEY_PATH "$DATA_DIR/gateway_host_key"
+  set_env_value "$editor" PAM_SESSION_LOG_DIR "$LOG_DIR/sessions"
+  set_env_value "$editor" PAM_LOCAL_AUTH_MODE "$LOCAL_AUTH_MODE"
+  set_env_value "$editor" PAM_DEFAULT_ADMIN_USER "$ADMIN_USER"
+  set_env_value "$editor" PAM_DEFAULT_ADMIN_EMAIL "$ADMIN_EMAIL"
+  set_env_value "$editor" PAM_OS_ADMIN_USERS "$ADMIN_USER"
+  set_env_value "$editor" ALGEN_PAM_HOST "$APP_HOST"
+  set_env_value "$editor" ALGEN_PAM_PORT "$APP_PORT"
+  set_env_value "$editor" PAM_GATEWAY_PORT "$GATEWAY_PORT"
+  remove_env_value "$editor" PAM_DEFAULT_ADMIN_PASSWORD
+  if [[ "$editor" != "$CONFIG_FILE" ]]; then as_root install -m 0600 "$editor" "$CONFIG_FILE"; fi
+  target_cmd chmod 0600 "$CONFIG_FILE"
+  if [[ "$SCOPE" == system ]]; then as_root chown "$TARGET_USER:$TARGET_GROUP" "$CONFIG_DIR" "$CONFIG_FILE"; fi
+  mkdir -p "$STAGED_APP"; ln -sfn "$CONFIG_FILE" "$STAGED_APP/.env"
+}
+
+# ---- source acquisition and staged build ----------------------------------
+validate_source_tree() {
+  local d="$1"
+  [[ -f "$d/backend/requirements.txt" && -f "$d/backend/app/main.py" && -f "$d/backend/app/bootstrap_admin.py" && -f "$d/frontend/index.html" && -f "$d/.env.example" ]] \
+    || die "Source does not contain the expected Algen PAM project structure."
+}
+acquire_source() {
+  STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/algen-pam.XXXXXX")"; STAGED_APP="$STAGE_ROOT/release"
+  local local_repo="${REPO#file://}"
+  if [[ -d "$local_repo" ]]; then
+    mkdir -p "$STAGED_APP"
+    tar -C "$local_repo" --exclude=.git --exclude=.env --exclude=data --exclude=backend/.venv --exclude='*/__pycache__' -cf - . | tar -C "$STAGED_APP" -xf -
+  elif [[ "$REPO" == https://* ]]; then
+    local kind=heads ref="$BRANCH" archive="$STAGE_ROOT/source.tar.gz" unpack="$STAGE_ROOT/unpack" url
+    if [[ -n "$TAG" ]]; then kind=tags; ref="$TAG"; fi
+    url="${REPO%.git}/archive/refs/$kind/$ref.tar.gz"
+    if command -v curl >/dev/null; then run curl -fsSL --retry 3 "$url" -o "$archive"
+    else run wget -q "$url" -O "$archive"; fi
+    tar -tzf "$archive" >/dev/null || die "Downloaded source is not a valid gzip tar archive."
+    tar -tzf "$archive" | awk 'BEGIN { bad=0 } /(^\/|(^|\/)\.\.($|\/))/ { bad=1 } END { exit bad }' \
+      || die "Downloaded archive contains an unsafe path."
+    mkdir -p "$unpack"; tar -xzf "$archive" -C "$unpack"
+    local extracted; extracted="$(find "$unpack" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+    [[ -n "$extracted" ]] || die "Downloaded archive has no project directory."
+    mv "$extracted" "$STAGED_APP"
   else
-    sudo_cmd systemctl "$@"
-  fi
-}
-
-service_exists() {
-  [[ -f "$SERVICE_FILE" ]]
-}
-
-service_is_active() {
-  if [[ "$SYSTEMD_USER" -eq 1 ]]; then
-    systemctl --user is-active --quiet algen-pam.service 2>/dev/null
-  else
-    systemctl is-active --quiet algen-pam.service 2>/dev/null
-  fi
-}
-
-service_is_enabled() {
-  if [[ "$SYSTEMD_USER" -eq 1 ]]; then
-    systemctl --user is-enabled --quiet algen-pam.service 2>/dev/null
-  else
-    systemctl is-enabled --quiet algen-pam.service 2>/dev/null
-  fi
-}
-
-service_should_be_running() {
-  if [[ "$CREATE_SERVICE" == "1" ]]; then
-    return 0
-  fi
-  [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 ]] && service_exists
-}
-
-stop_service_if_needed() {
-  if service_is_active; then
-    SERVICE_WAS_ACTIVE=1
-    log "Stopping running systemd service."
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      echo "[dry-run] systemctl stop algen-pam.service"
+    command -v git >/dev/null || die "Git is required for SSH repository URLs."
+    run git clone --filter=blob:none --no-checkout "$REPO" "$STAGED_APP"
+    if [[ -n "$TAG" ]]; then
+      run git -C "$STAGED_APP" fetch --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
+      run git -C "$STAGED_APP" checkout --detach "refs/tags/$TAG"
     else
-      systemctl_cmd stop algen-pam.service || true
+      run git -C "$STAGED_APP" fetch --depth 1 origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+      run git -C "$STAGED_APP" checkout --detach "refs/remotes/origin/$BRANCH"
     fi
+    rm -rf "$STAGED_APP/.git"
   fi
+  validate_source_tree "$STAGED_APP"
+}
+build_staged_release() {
+  info "Building and validating the staged release."
+  run python3 -m venv --copies "$STAGED_APP/backend/.venv"
+  run "$STAGED_APP/backend/.venv/bin/python" -m pip install --disable-pip-version-check -r "$STAGED_APP/backend/requirements.txt"
+  (cd "$STAGED_APP/backend" && DATABASE_URL=sqlite:///:memory: PAM_LOCAL_AUTH_MODE=database "$STAGED_APP/backend/.venv/bin/python" -c 'import app.main; import app.bootstrap_admin') \
+    || die "Staged backend import validation failed."
 }
 
-create_service() {
-  [[ "$CREATE_SERVICE" == "1" ]] || return 0
-  command -v systemctl >/dev/null 2>&1 || abort "systemctl not found; rerun with --no-service."
-  log "Creating systemd service at $SERVICE_FILE."
-  local user_line=""
-  local wanted_by="default.target"
-  if [[ "$SYSTEMD_USER" -eq 0 ]]; then
-    user_line="User=$INSTALL_OWNER"
-    wanted_by="multi-user.target"
-  fi
-  write_file_privileged "$SERVICE_FILE" "0644" <<EOF
+# ---- systemd and service state --------------------------------------------
+systemctl_do() { if [[ "$SYSTEMD_USER" -eq 1 ]]; then run systemctl --user "$@"; else as_root systemctl "$@"; fi; }
+service_is_active() { if [[ "$SYSTEMD_USER" -eq 1 ]]; then systemctl --user is-active --quiet algen-pam.service 2>/dev/null; else systemctl is-active --quiet algen-pam.service 2>/dev/null; fi; }
+service_is_enabled() { if [[ "$SYSTEMD_USER" -eq 1 ]]; then systemctl --user is-enabled --quiet algen-pam.service 2>/dev/null; else systemctl is-enabled --quiet algen-pam.service 2>/dev/null; fi; }
+capture_service_state() { service_is_active && SERVICE_WAS_ACTIVE=1 || true; service_is_enabled && SERVICE_WAS_ENABLED=1 || true; }
+write_launcher() {
+  local tmp="$STAGE_ROOT/launcher"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
+    "[[ \"\${1:-}\" != --version ]] || { echo \"$APP_ID $INSTALLER_VERSION\"; exit 0; }" \
+    "cd \"$INSTALL_DIR/backend\"" \
+    "exec \"$INSTALL_DIR/backend/.venv/bin/uvicorn\" app.main:app --host \"\${ALGEN_PAM_HOST:-$APP_HOST}\" --port \"\${ALGEN_PAM_PORT:-$APP_PORT}\" \"\$@\"" >"$tmp"
+  target_cmd install -m 0755 "$tmp" "$BIN_PATH"
+}
+write_service() {
+  [[ "$SERVICE_CHOICE" -eq 1 ]] || return 0
+  command -v systemctl >/dev/null || die "systemctl is unavailable; use --no-service."
+  local tmp="$STAGE_ROOT/algen-pam.service" user_line="" wanted=default.target protect_home=read-only
+  if [[ "$SYSTEMD_USER" -eq 0 ]]; then user_line="User=$TARGET_USER"; wanted=multi-user.target; protect_home=true; fi
+  cat >"$tmp" <<EOF
 [Unit]
 Description=$APP_TITLE
 After=network-online.target
@@ -988,352 +525,248 @@ EnvironmentFile=$CONFIG_FILE
 ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host $APP_HOST --port $APP_PORT
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=$protect_home
+ReadWritePaths=$DATA_DIR $LOG_DIR
+UMask=0077
 
 [Install]
-WantedBy=$wanted_by
+WantedBy=$wanted
 EOF
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] systemctl daemon-reload"
-    echo "[dry-run] systemctl enable --now algen-pam.service"
-  else
-    systemctl_cmd daemon-reload
-    systemctl_cmd enable --now algen-pam.service
-  fi
+  target_cmd mkdir -p "$(dirname "$SERVICE_FILE")"; target_cmd install -m 0644 "$tmp" "$SERVICE_FILE"; systemctl_do daemon-reload
 }
-
-create_desktop_launcher() {
-  [[ "$CREATE_DESKTOP" == "1" ]] || return 0
-  log "Creating desktop launcher at $DESKTOP_FILE."
-  write_file_privileged "$DESKTOP_FILE" "0644" <<EOF
+write_desktop() {
+  [[ "$DESKTOP_CHOICE" -eq 1 ]] || return 0
+  local tmp="$STAGE_ROOT/algen-pam.desktop"
+  cat >"$tmp" <<EOF
 [Desktop Entry]
 Type=Application
 Name=$APP_TITLE
-Comment=Open the Linux PAM Lite web interface
 Exec=xdg-open http://127.0.0.1:$APP_PORT/
 Terminal=false
 Categories=System;Security;
 EOF
+  target_cmd mkdir -p "$(dirname "$DESKTOP_FILE")"
+  target_cmd install -m 0644 "$tmp" "$DESKTOP_FILE"
 }
 
-validate_installation() {
-  log "Validating installation."
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] validate launcher, version, service status, and HTTP health endpoint"
-    return 0
-  fi
-  [[ -x "$BIN_PATH" ]] || abort "Launcher was not created at $BIN_PATH."
-  "$BIN_PATH" --version >/dev/null || log "Version check is not supported."
-  validate_local_auth_backend
-  if service_should_be_running; then
-    service_exists || abort "The systemd service file was not created at $SERVICE_FILE."
-    service_is_enabled || abort "Application service is not enabled after installation/update."
-    service_is_active || {
-      systemctl_cmd status algen-pam.service --no-pager || true
-      abort "Application service is not active after installation/update."
-    }
-    systemctl_cmd status algen-pam.service --no-pager
-    wait_for_health || abort "Application service started but http://127.0.0.1:$APP_PORT/api/health did not respond. Check $LOG_FILE and the systemd journal."
-    log "Systemd service is enabled, active, and responding correctly."
-  else
-    validate_temporary_server
-  fi
-}
-
-validate_local_auth_backend() {
-  [[ "$LOCAL_AUTH_MODE" == "os" ]] || return 0
-  "$INSTALL_DIR/backend/.venv/bin/python" - "$ADMIN_USER" <<'PY' \
-    || abort "Linux PAM backend validation failed. Check that libpam is installed and the selected OS account exists."
-import pwd
-import sys
-
-import pam
-
-pwd.getpwnam(sys.argv[1])
-pam.pam()
+# ---- port and runtime validation ------------------------------------------
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null; then ss -H -ltn 2>/dev/null | awk -v p=":$port" '$4 ~ p"$" {found=1} END {exit !found}'
+  elif command -v lsof >/dev/null; then lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -q .
+  else python3 - "$port" <<'PY'
+import socket, sys
+s=socket.socket()
+try: s.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError: raise SystemExit(0)
+finally: s.close()
+raise SystemExit(1)
 PY
-  log "Linux PAM backend and operating-system account $ADMIN_USER validated."
+  fi
 }
-
-wait_for_health() {
-  local attempt
-  for attempt in {1..30}; do
-    if curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" >/dev/null 2>&1; then
-      log "Application health check passed on port $APP_PORT."
-      return 0
+find_port() { local p="$1"; while (( p <= 65535 )); do port_in_use "$p" || { printf '%s' "$p"; return; }; ((p++)); done; return 1; }
+validate_ports() {
+  [[ "$MODE" == install ]] || return 0
+  local variable current replacement
+  for variable in APP_PORT GATEWAY_PORT; do current="${!variable}"; if port_in_use "$current"; then
+    if [[ "$AUTO_PORT" -eq 1 ]]; then replacement="$(find_port "$((current+1))")" || die "No free port available."; printf -v "$variable" %s "$replacement"
+    elif [[ "$SILENT" -eq 1 || "$YES" -eq 1 ]]; then die "Port $current is occupied. Supply another port or --auto-port."
+    else die "Port $current is occupied; rerun with an explicit free port."
     fi
-    sleep 1
+  fi
   done
-  return 1
+}
+wait_health() { local _; for _ in {1..30}; do curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" | grep -q '"message":"ok"' && return 0; sleep 1; done; return 1; }
+validate_runtime() {
+  [[ "$SERVICE_CHOICE" -eq 1 ]] && return 0
+  local v_log="$LOG_DIR/validation.log"
+  (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$APP_PORT") >"$v_log" 2>&1 & TEMP_SERVER_PID=$!
+  if ! wait_health; then
+    warn "Health check failed; inspect $v_log."
+    kill "$TEMP_SERVER_PID" 2>/dev/null || true; wait "$TEMP_SERVER_PID" 2>/dev/null || true; TEMP_SERVER_PID=""
+    return 1
+  fi
+  kill "$TEMP_SERVER_PID" 2>/dev/null || true; wait "$TEMP_SERVER_PID" 2>/dev/null || true; TEMP_SERVER_PID=""
 }
 
-validate_temporary_server() {
-  local validation_log="$LOG_DIR/validation.log"
-  log "Starting a temporary application process for the health check."
-  ALGEN_PAM_HOST="127.0.0.1" ALGEN_PAM_PORT="$APP_PORT" "$BIN_PATH" >"$validation_log" 2>&1 &
-  TEMP_SERVER_PID=$!
-  if wait_for_health; then
-    kill "$TEMP_SERVER_PID" 2>/dev/null || true
-    wait "$TEMP_SERVER_PID" 2>/dev/null || true
-    TEMP_SERVER_PID=""
-    log "Temporary validation process stopped."
+# ---- backup, deployment, rollback, uninstall ------------------------------
+write_marker() {
+  local tmp="$STAGE_ROOT/marker"
+  printf 'app=%s\ninstaller_version=%s\nscope=%s\ninstall_dir=%s\ninstalled_at=%s\n' "$APP_ID" "$INSTALLER_VERSION" "$SCOPE" "$INSTALL_DIR" "$(date -u +%FT%TZ)" >"$tmp"
+  target_cmd install -m 0600 "$tmp" "$INSTALL_DIR/.algen-pam-install"
+}
+backup_state() {
+  local root
+  root="$CONFIG_DIR/backups/$(date -u +%Y%m%dT%H%M%SZ)"; target_cmd mkdir -p "$root"
+  [[ ! -f "$CONFIG_FILE" ]] || target_cmd cp -p "$CONFIG_FILE" "$root/env"
+  [[ ! -d "$DATA_DIR" ]] || target_cmd tar -C "$DATA_DIR" -czf "$root/data.tar.gz" .
+  target_cmd chmod -R go-rwx "$root"; info "Backup created: $root"
+  STATE_BACKUP_DIR="$root"
+}
+safe_target() {
+  [[ "$INSTALL_DIR" == /* && "$INSTALL_DIR" != / && ! -L "$INSTALL_DIR" ]] || die "Unsafe or symbolic installation target: $INSTALL_DIR"
+  marker_valid || die "Refusing deletion: installation marker is absent or inconsistent."
+  local resolved; resolved="$(readlink -f "$INSTALL_DIR")"; [[ "$resolved" == "$INSTALL_DIR" ]] || die "Installation path resolves outside its declared location."
+  if find "$INSTALL_DIR" -type l -print0 | while IFS= read -r -d '' link; do
+    local destination; destination="$(readlink -f "$link")"
+    [[ "$destination" == "$INSTALL_DIR"/* || ( "$link" == "$INSTALL_DIR/.env" && "$destination" == "$CONFIG_FILE" ) ]] || exit 1
+  done; then :; else die "Installation contains a symlink escaping the installation directory."; fi
+}
+create_system_user_if_needed() {
+  [[ "$SCOPE" == system && "$TARGET_USER" == algen-pam ]] || return 0
+  id algen-pam >/dev/null 2>&1 || as_root useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin algen-pam
+  TARGET_GROUP="$(id -gn algen-pam)"
+}
+deploy_release() {
+  local parent; parent="$(dirname "$INSTALL_DIR")"; target_cmd mkdir -p "$parent"
+  RELEASE_BACKUP="$parent/.algen-pam.previous.$(date +%s)"
+  if marker_valid; then safe_target; target_cmd mv "$INSTALL_DIR" "$RELEASE_BACKUP"; fi
+  if ! target_cmd mv "$STAGED_APP" "$INSTALL_DIR"; then
+    [[ ! -d "$RELEASE_BACKUP" ]] || target_cmd mv "$RELEASE_BACKUP" "$INSTALL_DIR"
+    die "Release switch failed and the previous release was restored."
+  fi
+  if [[ -d "$RELEASE_BACKUP/data" ]]; then target_cmd rm -rf "$INSTALL_DIR/data"; target_cmd mv "$RELEASE_BACKUP/data" "$INSTALL_DIR/data"; else target_cmd mkdir -p "$DATA_DIR"; fi
+  target_cmd ln -sfn "$CONFIG_FILE" "$INSTALL_DIR/.env"
+  write_marker; target_cmd chmod 0700 "$DATA_DIR"
+  if [[ "$SCOPE" == system ]]; then
+    as_root chown "$TARGET_USER:$TARGET_GROUP" "$DATA_DIR" "$LOG_DIR"
+    as_root find "$DATA_DIR" "$LOG_DIR" -xdev -type f -exec chown "$TARGET_USER:$TARGET_GROUP" '{}' +
+  fi
+}
+rollback_release() {
+  warn "Validation failed; rolling back the application release."
+  [[ "$SERVICE_CHOICE" -eq 0 ]] || systemctl_do stop algen-pam.service 2>/dev/null || true
+  local failed
+  failed="$INSTALL_DIR.failed.$(date +%s)"
+  [[ ! -d "$INSTALL_DIR" ]] || target_cmd mv "$INSTALL_DIR" "$failed"
+  if [[ ! -d "$RELEASE_BACKUP" ]]; then
+    DIAGNOSTIC_PATH="$failed"
+    warn "No previous release existed; the failed fresh release was retained for diagnostics."
     return 0
   fi
-  kill "$TEMP_SERVER_PID" 2>/dev/null || true
-  wait "$TEMP_SERVER_PID" 2>/dev/null || true
-  TEMP_SERVER_PID=""
-  abort "Application did not pass its health check. See $validation_log."
+  target_cmd mv "$RELEASE_BACKUP" "$INSTALL_DIR"
+  if [[ -d "$failed/data" ]]; then target_cmd rm -rf "$INSTALL_DIR/data"; target_cmd mv "$failed/data" "$INSTALL_DIR/data"; fi
+  if [[ -f "$STATE_BACKUP_DIR/env" ]]; then target_cmd install -m 0600 "$STATE_BACKUP_DIR/env" "$CONFIG_FILE"; fi
+  if [[ -f "$STATE_BACKUP_DIR/data.tar.gz" ]]; then
+    target_cmd rm -rf "$INSTALL_DIR/data"; target_cmd mkdir -p "$INSTALL_DIR/data"
+    target_cmd tar -C "$INSTALL_DIR/data" -xzf "$STATE_BACKUP_DIR/data.tar.gz"
+  fi
+  DIAGNOSTIC_PATH="$failed"
+  [[ "$SERVICE_WAS_ACTIVE" -eq 0 ]] || systemctl_do start algen-pam.service
 }
-
-primary_ip_address() {
-  local address=""
-  if command -v hostname >/dev/null 2>&1; then
-    address="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  fi
-  if [[ -z "$address" ]] && command -v ip >/dev/null 2>&1; then
-    address="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')"
-  fi
-  printf '%s\n' "$address"
-}
-
-safe_remove_dir() {
-  local dir="$1"
-  [[ -n "$dir" && "$dir" != "/" && "$dir" != "$HOME" ]] || abort "Refusing to remove unsafe directory: $dir"
-  if [[ ! -e "$dir" ]]; then
-    return 0
-  fi
-  if [[ -f "$dir/.algen-pam-install" \
-    || "$dir" == "/opt/algen-pam" \
-    || "$dir" == "$HOME/.local/share/algen-pam" \
-    || "$dir" == "/etc/algen-pam" \
-    || "$dir" == "$HOME/.config/algen-pam" \
-    || "$dir" == "/var/log/algen-pam" \
-    || "$dir" == "$HOME/.local/state/algen-pam/logs" ]]; then
-    run_privileged rm -rf "$dir"
+bootstrap_admin() {
+  [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0
+  local -a update_arg=(); [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 1 && "$MODE" != install ]] && update_arg=(--update-password)
+  if [[ "$SCOPE" == system && "$(id -u)" -eq 0 && "$TARGET_USER" != root ]]; then
+    (cd "$INSTALL_DIR/backend" && runuser -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
+  elif [[ "$SCOPE" == system && "$(id -u)" -ne 0 && "$TARGET_USER" != "$(id -un)" ]]; then
+    (cd "$INSTALL_DIR/backend" && sudo -u "$TARGET_USER" -- "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
   else
-    abort "Refusing to remove $dir because it does not look like an Algen-PAM installation."
+    (cd "$INSTALL_DIR/backend" && "$INSTALL_DIR/backend/.venv/bin/python" -m app.bootstrap_admin --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" "${update_arg[@]}")
   fi
+  remove_env_value "$CONFIG_FILE" PAM_DEFAULT_ADMIN_PASSWORD
+}
+remove_integrations() {
+  service_is_active && systemctl_do stop algen-pam.service || true
+  if [[ -f "$SERVICE_FILE" ]]; then systemctl_do disable algen-pam.service 2>/dev/null || true; target_cmd rm -f "$SERVICE_FILE"; systemctl_do daemon-reload || true; fi
+  target_cmd rm -f "$BIN_PATH" "$DESKTOP_FILE"
+}
+remove_app_only() { safe_target; remove_integrations; target_cmd find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name data ! -name .algen-pam-install -exec rm -rf -- '{}' +; info "Application removed; data, configuration, and logs preserved."; }
+full_uninstall() {
+  safe_target; remove_integrations
+  # Keep the final log writable until the final message has been emitted.
+  if [[ "$KEEP_DATA" -eq 1 ]]; then target_cmd mkdir -p "$CONFIG_DIR"; target_cmd mv "$DATA_DIR" "$CONFIG_DIR/data-preserved-$(date +%s)"; KEEP_CONFIG=1; fi
+  target_cmd rm -rf -- "$INSTALL_DIR"
+  [[ "$KEEP_CONFIG" -eq 1 ]] || target_cmd rm -rf -- "$CONFIG_DIR"
+  [[ "$KEEP_LOGS" -eq 1 ]] || target_cmd rm -rf -- "$LOG_DIR"
+  LOG_FILE=""; info "Uninstall completed."
 }
 
-backup_config() {
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    log "No configuration file found at $CONFIG_FILE; backup skipped."
-    return 0
-  fi
-  local backup_dir="$CONFIG_DIR/backups"
-  local backup_file="$backup_dir/.env.$(date '+%Y%m%d-%H%M%S').bak"
-  run_privileged mkdir -p "$backup_dir"
-  run_privileged cp -p "$CONFIG_FILE" "$backup_file"
-  log "Configuration backup created at $backup_file."
+# ---- main operation flow ---------------------------------------------------
+prepare_admin_defaults() {
+  [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$TARGET_USER"
+  [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"
+  [[ "$LOCAL_AUTH_MODE" != os || "$DRY_RUN" -eq 1 || ( "$SCOPE" == system && "$ADMIN_USER" == algen-pam ) ]] \
+    || id "$ADMIN_USER" >/dev/null 2>&1 || die "OS administrator account '$ADMIN_USER' does not exist."
 }
-
-validate_cleanup_target() {
-  [[ "$INSTALL_DIR" == /* && "$INSTALL_DIR" != "/" && "$INSTALL_DIR" != "$HOME" ]] \
-    || abort "Refusing to clean unsafe installation directory: $INSTALL_DIR"
-  [[ -f "$INSTALL_DIR/.algen-pam-install" \
-    || "$INSTALL_DIR" == "/opt/algen-pam" \
-    || "$INSTALL_DIR" == "$HOME/.local/share/algen-pam" ]] \
-    || abort "Refusing to clean $INSTALL_DIR because it does not look like an Algen-PAM installation."
+prepare_admin_password() {
+  [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0
+  if [[ -z "$ADMIN_PASSWORD" && "$DRY_RUN" -eq 1 ]]; then ADMIN_PASSWORD=dry-run-placeholder
+  elif [[ -z "$ADMIN_PASSWORD" ]]; then ADMIN_PASSWORD="$(generate_secret 18)"; ADMIN_PASSWORD_GENERATED=1; fi
+  [[ ${#ADMIN_PASSWORD} -ge 12 ]] || die "Administrator password must contain at least 12 characters."
 }
-
-clean_application_files_keep_data() {
-  validate_cleanup_target
-  log "Removing application files while preserving $DATA_DIR."
-  local entry
-  while IFS= read -r -d '' entry; do
-    run_privileged rm -rf "$entry"
-  done < <(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name "data" ! -name ".algen-pam-install" -print0)
-}
-
-remove_service_integration() {
-  stop_service_if_needed
-  if service_exists; then
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      echo "[dry-run] systemctl disable algen-pam.service"
-      echo "[dry-run] remove $SERVICE_FILE"
-    else
-      systemctl_cmd disable algen-pam.service || true
-      run_privileged rm -f "$SERVICE_FILE"
-      systemctl_cmd daemon-reload || true
-    fi
-  fi
-  run_privileged rm -f "$BIN_PATH"
-  run_privileged rm -f "$DESKTOP_FILE"
-}
-
-remove_application_keep_state() {
-  prepare_logging
-  log "Removing $APP_TITLE while keeping configuration, data, and logs."
-  remove_service_integration
-  clean_application_files_keep_data
-  run_privileged rm -f "$INSTALL_DIR/.algen-pam-install"
-  log "Application removed. Preserved: $CONFIG_DIR, $DATA_DIR, and $LOG_DIR."
-}
-
-uninstall_app() {
-  prepare_logging
-  log "Uninstalling $APP_TITLE."
-  remove_service_integration
-  safe_remove_dir "$INSTALL_DIR"
-  if [[ "$KEEP_CONFIG" -eq 0 ]]; then
-    safe_remove_dir "$CONFIG_DIR"
-  fi
-  if [[ "$KEEP_LOGS" -eq 0 ]]; then
-    safe_remove_dir "$LOG_DIR"
-  fi
-  log "Uninstall complete."
-}
-
-install_app() {
-  prepare_logging
-  if [[ "$INSTALL_ACTION" == "update" ]]; then
-    backup_config
-  fi
-  check_system
+prepare_logging() { target_cmd mkdir -p "$LOG_DIR"; target_cmd touch "$LOG_FILE"; target_cmd chmod 0600 "$LOG_FILE"; }
+execute_install_or_update() {
   install_dependencies
-  if [[ "$DO_UPDATE" -eq 1 ]]; then
-    stop_service_if_needed
+  acquire_source
+  build_staged_release
+  create_system_user_if_needed
+  capture_service_state
+  if [[ "$SERVICE_WAS_ACTIVE" -eq 1 ]]; then systemctl_do stop algen-pam.service; fi
+  [[ "$MODE" == update || "$MODE" == reinstall ]] && backup_state
+  if ! prepare_config; then
+    [[ "$SERVICE_WAS_ACTIVE" -eq 0 ]] || systemctl_do start algen-pam.service || true
+    die "Configuration preparation failed before release switch."
   fi
-  prepare_directories
-  choose_ports
-  fetch_source
-  configure_app
-  build_app
-  bootstrap_admin
-  create_launcher
-  create_service
-  create_desktop_launcher
-  if [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 && "$CREATE_SERVICE" != "1" && "$DRY_RUN" -eq 0 ]]; then
-    log "Re-enabling and restarting service that was active before update."
-    systemctl_cmd enable --now algen-pam.service
+  deploy_release
+  if ! write_launcher || ! write_service || ! write_desktop || ! bootstrap_admin; then
+    rollback_release
+    die "Release integration or administrator bootstrap failed; rollback completed."
   fi
-  validate_installation
-  log "Installation complete."
-}
-
-print_final_info() {
-  local network_ip
-  local login_hint
-  network_ip="$(primary_ip_address)"
-  if [[ "$LOCAL_AUTH_MODE" == "os" ]]; then
-    login_hint="Use the Linux operating-system password for $ADMIN_USER (authenticated by PAM)."
+  if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
+    if [[ "$MODE" == install ]]; then systemctl_do enable --now algen-pam.service || { rollback_release; die "Service start failed; rollback completed."; }
+    elif [[ "$SERVICE_WAS_ACTIVE" -eq 1 ]]; then systemctl_do start algen-pam.service || { rollback_release; die "Service restart failed; rollback completed."; }
+    fi
+  fi
+  debug "Previous service state: active=$SERVICE_WAS_ACTIVE enabled=$SERVICE_WAS_ENABLED"
+  local valid=0
+  if [[ "$SERVICE_CHOICE" -eq 1 && ( "$SERVICE_WAS_ACTIVE" -eq 1 || "$MODE" == install ) ]]; then
+    service_is_active && wait_health && valid=1
   else
-    login_hint="Use the application password configured during installation."
-  fi
-  cat <<EOF
-
-$APP_TITLE is ready.
-
-Run:
-  $BIN_PATH
-
-Open:
-  http://127.0.0.1:$APP_PORT/
-
-Network access (listening on all interfaces):
-  http://${network_ip:-SERVER_IP}:$APP_PORT/
-
-SSH gateway port:
-  $GATEWAY_PORT
-
-Config:
-  $CONFIG_FILE
-
-Admin:
-  $ADMIN_USER <$ADMIN_EMAIL>
-
-Local login:
-  $login_hint
-
-Log:
-  $LOG_FILE
-EOF
-  if [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]; then
-    cat <<EOF
-
-Generated admin password:
-  $ADMIN_PASSWORD
-EOF
-  fi
-  if [[ "$CREATE_SERVICE" == "1" ]]; then
-    if [[ "$SYSTEMD_USER" -eq 1 ]]; then
-      cat <<'EOF'
-
-Service commands:
-  systemctl --user status algen-pam
-  systemctl --user stop algen-pam
-  systemctl --user start algen-pam
-EOF
-    else
-      cat <<'EOF'
-
-Service commands:
-  sudo systemctl status algen-pam
-  sudo systemctl stop algen-pam
-  sudo systemctl start algen-pam
-EOF
+    if port_in_use "$APP_PORT"; then warn "Cannot run validation: port $APP_PORT is occupied by another process."
+    elif validate_runtime; then valid=1
     fi
   fi
+  if [[ "$valid" -ne 1 ]]; then rollback_release; die "New release failed validation; rollback completed."; fi
+  [[ -z "$RELEASE_BACKUP" || ! -d "$RELEASE_BACKUP" ]] || target_cmd rm -rf -- "$RELEASE_BACKUP"
 }
-
 main() {
-  parse_args "$@"
-  detect_installed_scope
-  if [[ "$SILENT" -eq 0 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]]; then
-    run_interactive_installer
-  fi
+  parse_args "$@"                         # 1
+  validate_arguments                       # 2
+  detect_existing_scope                    # 3
+  resolve_identity
   resolve_paths
-
-  if [[ "$SILENT" -eq 1 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]] \
-    && installation_present; then
-    echo "Existing installation detected in $INSTALL_DIR; selecting automatic update."
-    INSTALL_ACTION="update"
-    DO_UPDATE=1
+  interactive_mode_selection
+  interactive_install_wizard
+  interactive_mode_selection
+  determine_mode                           # 4
+  [[ -n "$SERVICE_CHOICE" ]] || { if [[ -f "$SERVICE_FILE" ]]; then SERVICE_CHOICE=1; else SERVICE_CHOICE=0; fi; }
+  load_existing_configuration              # 5/6
+  validate_arguments
+  require_privileges                       # 7
+  prepare_admin_defaults                    # 8
+  prepare_admin_password
+  validate_ports
+  confirm_summary                          # 9
+  [[ "$DRY_RUN" -eq 0 ]] || { info "Dry run complete; no changes were made."; return 0; }
+  MUTATIONS_STARTED=1
+  prepare_logging
+  case "$MODE" in                          # 10
+    install|update|reinstall) execute_install_or_update ;;
+    backup) backup_state ;;
+    remove-app) remove_app_only ;;
+    uninstall) full_uninstall ;;
+  esac
+                                           # 11: operation-specific validation completed
+  info "Operation '$MODE' completed successfully."
+  if [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 && "$MODE" != uninstall ]]; then
+    printf '\nGenerated administrator password (shown once):\n  %s\n' "$ADMIN_PASSWORD"
   fi
-  if [[ "$DO_UPDATE" -eq 1 && -z "$INSTALL_ACTION" ]]; then
-    INSTALL_ACTION="update"
-  fi
-
-  if [[ "$CREATE_SERVICE" == "" ]]; then
-    if [[ "$DO_UPDATE" -eq 1 ]] && service_exists; then
-      CREATE_SERVICE=1
-      log "Existing systemd integration detected; it will be recreated and verified after update."
-    else
-      CREATE_SERVICE=0
-    fi
-  fi
-  if [[ "$CREATE_DESKTOP" == "" ]]; then
-    CREATE_DESKTOP=0
-  fi
-
-  if [[ "$INSTALL_ACTION" == "backup" ]]; then
-    prepare_logging
-    backup_config
-    log "Configuration-only backup complete."
-    return 0
-  fi
-  if [[ "$INSTALL_ACTION" == "remove_keep" ]]; then
-    remove_application_keep_state
-    return 0
-  fi
-
-  if [[ "$DO_UNINSTALL" -eq 0 ]]; then
-    load_configured_ports
-  fi
-  ensure_admin_settings
-
-  if [[ "$DO_UNINSTALL" -eq 1 ]]; then
-    confirm "Remove $APP_TITLE from $INSTALL_DIR?" || abort "Uninstall cancelled."
-    uninstall_app
-    return 0
-  fi
-
-  if [[ "$DO_UPDATE" -eq 1 ]]; then
-    confirm "Update $APP_TITLE in $INSTALL_DIR?" || abort "Update cancelled."
-  fi
-
-  install_app
-  print_final_info
+  unset ADMIN_PASSWORD
+  [[ "$MODE" == install || "$MODE" == update || "$MODE" == reinstall ]] && printf '\nOpen: http://127.0.0.1:%s/\nConfig: %s\n' "$APP_PORT" "$CONFIG_FILE"
 }
 
 main "$@"

@@ -209,7 +209,10 @@ def finish_gateway_connection(db: DBSession, connection: GatewayConnection, reas
     session = connection.session
     session.status = "closed" if reason == "completed" else "terminated"
     session.ended_at = now
-    session.duration_seconds = max(0, int((now - session.started_at).total_seconds()))
+    started_at = session.started_at
+    if started_at.tzinfo is None and now.tzinfo is not None:
+        started_at = started_at.replace(tzinfo=now.tzinfo)
+    session.duration_seconds = max(0, int((now - started_at).total_seconds()))
     session.termination_reason = reason
 
     recording = db.query(GatewayRecording).filter(GatewayRecording.session_id == session.id).first()

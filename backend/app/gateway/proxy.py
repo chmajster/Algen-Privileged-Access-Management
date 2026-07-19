@@ -2,6 +2,7 @@ from app.models import AccessGrant, Server
 from app.database import SessionLocal
 from app.models import Secret
 from app.vault import get_vault_backend_for_secret
+from sqlalchemy.orm import object_session
 from .service import write_gateway_event
 
 
@@ -10,15 +11,18 @@ def target_connection_settings(grant: AccessGrant) -> dict:
     key_path = server.gateway_private_key_path or server.ssh_private_key_path
     secret_id = server.gateway_secret_ref_id or server.ssh_auth_secret_id
     if secret_id:
-        db = SessionLocal()
+        db = object_session(grant) or object_session(server) or SessionLocal()
+        owns_session = object_session(grant) is None and object_session(server) is None
         try:
             secret = db.get(Secret, secret_id)
             if not secret:
                 raise RuntimeError("Configured gateway secret not found")
             get_vault_backend_for_secret(db, secret).get_secret_value(secret_id, {"server_id": server.id, "grant_id": grant.id, "access_context": "gateway_target_key"})
-            db.commit()
+            if owns_session:
+                db.commit()
         finally:
-            db.close()
+            if owns_session:
+                db.close()
         key_path = f"vault://secret/{secret_id}"
     return {
         "host": server.ip_address,

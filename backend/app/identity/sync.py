@@ -23,6 +23,11 @@ def upsert_external_user(db: DBSession, *, provider: str, external_id: str, user
         )
         db.add(user)
         db.flush()
+    elif user.username != username and not db.query(User).filter(User.username == username, User.id != user.id).first():
+        # The external identity is authoritative for its login name. This also
+        # keeps mock/OIDC callbacks correct when the same subject changes its
+        # preferred_username claim.
+        user.username = username
     user.role = role
     user.email = email or user.email
     user.display_name = display_name or user.display_name
