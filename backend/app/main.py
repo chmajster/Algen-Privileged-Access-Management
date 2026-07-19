@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +10,7 @@ from app import schemas
 from app.auth import get_current_user
 from app.config import settings
 from app.database import SessionLocal, init_db
+from app.identity.local_provider import LocalAuthenticationBackendError, validate_os_auth_backend
 from app.models import User
 from app.routes import access_grants, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
@@ -105,7 +106,15 @@ def get_settings(_: User = Depends(get_current_user)):
 
 @app.get("/api/health", response_model=schemas.Message)
 def health():
-    return {"message": "ok"}
+    detail = {"local_auth_mode": settings.pam_local_auth_mode}
+    if settings.pam_local_auth_mode == "os":
+        try:
+            validate_os_auth_backend()
+        except LocalAuthenticationBackendError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Linux PAM backend unavailable") from exc
+        detail["pam"] = "available"
+        detail["pam_service"] = settings.pam_os_pam_service
+    return {"message": "ok", "detail": detail}
 
 
 FRONTEND_DIR = Path(__file__).parents[2] / "frontend"
