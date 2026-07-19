@@ -24,6 +24,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 "$INSTALLER" --silent --yes --user --no-service --dry-run >/dev/null
+"$INSTALLER" --silent --yes --no-service --dry-run | grep -q "/opt/algen-pam"
 "$INSTALLER" --silent --yes --user --no-service --admin-user admin --admin-email admin@example.local --admin-password admin123 --dry-run >/dev/null
 "$INSTALLER" --uninstall --user --yes --dry-run --keep-config --keep-logs >/dev/null
 

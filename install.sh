@@ -80,7 +80,7 @@ Confirmation:
 Install target:
   --install-dir PATH    installation directory
   --user                install for the current user
-  --system              install system-wide
+  --system              install system-wide (default: /opt/algen-pam)
   --port PORT           HTTP port (default: 8080)
   --gateway-port PORT   SSH gateway port (default: 2222)
 
@@ -191,7 +191,7 @@ is_system_install() {
 
 resolve_paths() {
   if [[ -z "$INSTALL_SCOPE" ]]; then
-    INSTALL_SCOPE="user"
+    INSTALL_SCOPE="system"
   fi
 
   if is_system_install; then
@@ -533,15 +533,15 @@ ui_password() {
 ui_choose_scope() {
   if command -v whiptail >/dev/null 2>&1; then
     whiptail --title "Installation mode" --menu "Choose installation scope" 15 72 2 \
-      user "Current user" \
-      system "System-wide (/opt, /etc, /usr/local/bin)" 3>&1 1>&2 2>&3
+      system "System-wide (/opt, /etc, /usr/local/bin) [default]" \
+      user "Current user" 3>&1 1>&2 2>&3
   elif command -v dialog >/dev/null 2>&1; then
     dialog --title "Installation mode" --menu "Choose installation scope" 15 72 2 \
-      user "Current user" \
-      system "System-wide (/opt, /etc, /usr/local/bin)" 3>&1 1>&2 2>&3
+      system "System-wide (/opt, /etc, /usr/local/bin) [default]" \
+      user "Current user" 3>&1 1>&2 2>&3
   else
-    read -r -p "Install for current user or system-wide? [user/system] " answer
-    [[ "$answer" == "system" ]] && printf 'system\n' || printf 'user\n'
+    read -r -p "Install system-wide or for the current user? [system/user] " answer
+    [[ "$answer" == "user" ]] && printf 'user\n' || printf 'system\n'
   fi
 }
 

@@ -57,6 +57,10 @@ Wariant bez pytan:
 curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
 ```
 
+Bez wskazania zakresu instalator domyslnie instaluje aplikacje systemowo w
+`/opt/algen-pam`. Uzyj `--user`, aby wybrac instalacje w katalogu biezacego
+uzytkownika.
+
 Argumenty po `bash -s --` sa przekazywane do instalatora, na przyklad:
 
 ```bash
@@ -382,7 +386,7 @@ uslugi. Brak poprawnej odpowiedzi konczy instalacje bledem i wskazuje logi.
 --yes, -y             automatycznie akceptuje operacje
 --install-dir PATH    katalog instalacji
 --user                instalacja dla biezacego uzytkownika
---system              instalacja systemowa
+--system              instalacja systemowa (domyslnie /opt/algen-pam)
 --port PORT           port HTTP aplikacji (domyslnie 8080)
 --gateway-port PORT   port bramy SSH (domyslnie 2222)
 --service             utworz i wlacz usluge systemd

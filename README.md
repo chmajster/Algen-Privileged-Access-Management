@@ -25,6 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-M
 Instalator automatycznie korzysta z `/dev/tty`, dlatego kreator interaktywny
 dziala rowniez wtedy, gdy skrypt jest przekazywany do Bash przez potok. Instalacja
 bez pytan nadal jest dostepna przez `bash -s -- --silent --yes`.
+Domyslnie wykonywana jest instalacja systemowa w `/opt/algen-pam`; wariant lokalny
+dla biezacego uzytkownika wymaga opcji `--user`.
 
 Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
 instalacji CLI:
