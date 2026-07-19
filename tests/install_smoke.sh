@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="$ROOT_DIR/install.sh"
 
 bash -n "$INSTALLER"
+grep -F "libpam0g" "$INSTALLER" >/dev/null
+grep -F "find_library(\"pam\")" "$INSTALLER" >/dev/null
 
 bash "$INSTALLER" --help >/dev/null
 bash "$INSTALLER" --help | grep -F -- "--port PORT" >/dev/null
