@@ -15,13 +15,25 @@ Linux PAM Lite is a small Privileged Access Management web app for time-boxed SS
 
 ### Szybki instalator Linux
 
-Na Linuxie mozesz uzyc instalatora z trybem UI albo cichej instalacji CLI:
+Bezposrednia instalacja z repozytorium
+[chmajster/Algen-Privileged-Access-Management](https://github.com/chmajster/Algen-Privileged-Access-Management):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
+```
+
+Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
+instalacji CLI:
 
 ```bash
 ./install.sh
 ./install.sh --silent --yes --user --no-service --admin-user admin --admin-password 'zmien-to-haslo'
 ./install.sh --silent --yes --system --service --install-dir /opt/algen-pam
 ```
+
+Instalator sprawdza, czy port HTTP `8080` i port bramy SSH `2222` sa wolne. Przy
+konflikcie proponuje inne porty (albo wybiera je automatycznie w trybie
+`--silent --yes`). Wlasne wartosci ustawisz przez `--port` i `--gateway-port`.
 
 Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
 
@@ -36,8 +48,8 @@ Instalator tworzy lokalne konto admina aplikacji. Po zalogowaniu admin ma dostep
 Sklonuj repozytorium i przejdź do katalogu projektu:
 
 ```powershell
-git clone <repository-url>
-cd Algen-PAM
+git clone https://github.com/chmajster/Algen-Privileged-Access-Management.git
+cd Algen-Privileged-Access-Management
 ```
 
 Utwórz plik konfiguracyjny środowiska w katalogu głównym projektu:

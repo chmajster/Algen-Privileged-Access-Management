@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="algen-pam"
 APP_TITLE="Linux PAM Lite"
 APP_VERSION="1.0.0"
-DEFAULT_REPO_URL="https://github.com/chmajster/Algen-PAM"
+DEFAULT_REPO_URL="https://github.com/chmajster/Algen-Privileged-Access-Management"
 DEFAULT_BRANCH="main"
 
 SILENT=0
@@ -33,6 +33,13 @@ ADMIN_PASSWORD_GENERATED=0
 ADMIN_PASSWORD_SUPPLIED=0
 ADMIN_BOOTSTRAP=1
 UPDATE_ADMIN_PASSWORD=0
+APP_PORT="${ALGEN_PAM_PORT:-8080}"
+GATEWAY_PORT="${PAM_GATEWAY_PORT:-2222}"
+APP_PORT_EXPLICIT=0
+GATEWAY_PORT_EXPLICIT=0
+PORTS_CHECKED=0
+[[ -n "${ALGEN_PAM_PORT:-}" ]] && APP_PORT_EXPLICIT=1
+[[ -n "${PAM_GATEWAY_PORT:-}" ]] && GATEWAY_PORT_EXPLICIT=1
 [[ -n "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD_SUPPLIED=1 && UPDATE_ADMIN_PASSWORD=1
 
 abort() {
@@ -67,6 +74,8 @@ Install target:
   --install-dir PATH    installation directory
   --user                install for the current user
   --system              install system-wide
+  --port PORT           HTTP port (default: 8080)
+  --gateway-port PORT   SSH gateway port (default: 2222)
 
 Optional integration:
   --service             create and enable a systemd service
@@ -117,6 +126,8 @@ parse_args() {
       --install-dir) shift; [[ $# -gt 0 ]] || abort "--install-dir requires PATH"; INSTALL_DIR="$(expand_path "$1")" ;;
       --user) INSTALL_SCOPE="user" ;;
       --system) INSTALL_SCOPE="system" ;;
+      --port) shift; [[ $# -gt 0 ]] || abort "--port requires PORT"; APP_PORT="$1"; APP_PORT_EXPLICIT=1 ;;
+      --gateway-port) shift; [[ $# -gt 0 ]] || abort "--gateway-port requires PORT"; GATEWAY_PORT="$1"; GATEWAY_PORT_EXPLICIT=1 ;;
       --service) CREATE_SERVICE=1 ;;
       --no-service) CREATE_SERVICE=0 ;;
       --desktop) CREATE_DESKTOP=1 ;;
@@ -142,9 +153,18 @@ parse_args() {
 
   [[ -z "$BRANCH_NAME" || -z "$TAG_NAME" ]] || abort "Use either --branch or --tag, not both."
   [[ "$DO_UPDATE" -eq 0 || "$DO_UNINSTALL" -eq 0 ]] || abort "Use either --update or --uninstall, not both."
+  validate_port "$APP_PORT" "--port"
+  validate_port "$GATEWAY_PORT" "--gateway-port"
   if [[ "$SILENT" -eq 1 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
     abort "--silent requires --yes unless --dry-run is used."
   fi
+}
+
+validate_port() {
+  local port="$1"
+  local option="$2"
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) \
+    || abort "$option must be an integer between 1 and 65535."
 }
 
 generate_password() {
@@ -188,6 +208,116 @@ resolve_paths() {
   DATA_DIR="$INSTALL_DIR/data"
   CONFIG_FILE="$CONFIG_DIR/.env"
   LOG_FILE="$LOG_DIR/install.log"
+}
+
+configured_value() {
+  local key="$1"
+  [[ -f "$CONFIG_FILE" ]] || return 1
+  sed -n "s/^${key}=//p" "$CONFIG_FILE" | tail -n 1
+}
+
+load_configured_ports() {
+  local configured=""
+  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then
+    configured="$(configured_value "ALGEN_PAM_PORT" || true)"
+    [[ -z "$configured" ]] || APP_PORT="$configured"
+  fi
+  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then
+    configured="$(configured_value "PAM_GATEWAY_PORT" || true)"
+    [[ -z "$configured" ]] || GATEWAY_PORT="$configured"
+  fi
+  validate_port "$APP_PORT" "configured HTTP port"
+  validate_port "$GATEWAY_PORT" "configured gateway port"
+}
+
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -ltn 2>/dev/null | awk -v port="$port" '
+      { address=$4; sub(/^.*:/, "", address); if (address == port) found=1 }
+      END { exit(found ? 0 : 1) }
+    '
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -q .
+    return $?
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$port" <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError:
+    raise SystemExit(0)
+finally:
+    sock.close()
+raise SystemExit(1)
+PY
+    return $?
+  fi
+  log "Warning: cannot check port $port because ss, lsof, and python3 are unavailable."
+  return 1
+}
+
+find_available_port() {
+  local start="$1"
+  local candidate="$start"
+  local reserved="${2:-0}"
+  while (( candidate <= 65535 )); do
+    if [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    ((candidate += 1))
+  done
+  candidate=1024
+  while (( candidate < start && candidate <= 65535 )); do
+    if [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    ((candidate += 1))
+  done
+  abort "No free TCP port found."
+}
+
+choose_port() {
+  local label="$1"
+  local current="$2"
+  local reserved="${3:-0}"
+  local output_var="$4"
+  local candidate="$current"
+
+  if [[ "$current" -eq "$reserved" ]] || port_in_use "$current"; then
+    candidate="$(find_available_port "$((current + 1))" "$reserved")"
+    if [[ "$SILENT" -eq 1 ]]; then
+      log "$label port $current is already in use; selecting available port $candidate."
+    else
+      while true; do
+        candidate="$(ui_input "Port conflict" "$label port $current is already in use. Choose another port" "$candidate")"
+        if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate >= 1 && candidate <= 65535 )) \
+          && [[ "$candidate" -ne "$reserved" ]] && ! port_in_use "$candidate"; then
+          break
+        fi
+        ui_msg "Port conflict" "Port $candidate is invalid or already in use."
+        candidate="$(find_available_port "$((current + 1))" "$reserved")"
+      done
+    fi
+  fi
+  printf -v "$output_var" '%s' "$candidate"
+}
+
+choose_ports() {
+  [[ "$PORTS_CHECKED" -eq 0 ]] || return 0
+  choose_port "HTTP" "$APP_PORT" "$GATEWAY_PORT" APP_PORT
+  choose_port "SSH gateway" "$GATEWAY_PORT" "$APP_PORT" GATEWAY_PORT
+  APP_PORT_EXPLICIT=1
+  GATEWAY_PORT_EXPLICIT=1
+  PORTS_CHECKED=1
 }
 
 sudo_cmd() {
@@ -438,11 +568,15 @@ ui_flow() {
     CREATE_DESKTOP=1
   fi
   resolve_paths
+  load_configured_ports
+  choose_ports
   local summary
   summary="Scope: $INSTALL_SCOPE
 Install dir: $INSTALL_DIR
 Config dir: $CONFIG_DIR
 Log file: $LOG_FILE
+HTTP port: $APP_PORT
+SSH gateway port: $GATEWAY_PORT
 Admin user: $ADMIN_USER <$ADMIN_EMAIL>
 systemd service: $CREATE_SERVICE
 Desktop launcher: $CREATE_DESKTOP"
@@ -602,6 +736,11 @@ configure_app() {
 
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_USER" "$ADMIN_USER"
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_EMAIL" "$ADMIN_EMAIL"
+  set_env_value "$CONFIG_FILE" "ALGEN_PAM_PORT" "$APP_PORT"
+  set_env_value "$CONFIG_FILE" "PAM_GATEWAY_PORT" "$GATEWAY_PORT"
+  if [[ "$config_created" -eq 1 ]]; then
+    set_env_value "$CONFIG_FILE" "PAM_OIDC_REDIRECT_URI" "http://localhost:$APP_PORT/auth/oidc/callback"
+  fi
   if [[ "$config_created" -eq 1 || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 ]]; then
     set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_PASSWORD" "$ADMIN_PASSWORD"
   fi
@@ -667,7 +806,7 @@ if [[ "\${1:-}" == "--version" ]]; then
   exit 0
 fi
 cd "$INSTALL_DIR/backend"
-exec "$INSTALL_DIR/backend/.venv/bin/uvicorn" app.main:app --host "\${ALGEN_PAM_HOST:-0.0.0.0}" --port "\${ALGEN_PAM_PORT:-8080}" "\$@"
+exec "$INSTALL_DIR/backend/.venv/bin/uvicorn" app.main:app --host "\${ALGEN_PAM_HOST:-0.0.0.0}" --port "\${ALGEN_PAM_PORT:-$APP_PORT}" "\$@"
 EOF
 }
 
@@ -724,7 +863,7 @@ Type=simple
 $user_line
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$CONFIG_FILE
-ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT
 Restart=on-failure
 RestartSec=5
 
@@ -748,7 +887,7 @@ create_desktop_launcher() {
 Type=Application
 Name=$APP_TITLE
 Comment=Open the Linux PAM Lite web interface
-Exec=xdg-open http://127.0.0.1:8080/
+Exec=xdg-open http://127.0.0.1:$APP_PORT/
 Terminal=false
 Categories=System;Security;
 EOF
@@ -820,6 +959,7 @@ install_app() {
   if [[ "$DO_UPDATE" -eq 1 ]]; then
     stop_service_if_needed
   fi
+  choose_ports
   fetch_source
   configure_app
   build_app
@@ -844,7 +984,10 @@ Run:
   $BIN_PATH
 
 Open:
-  http://127.0.0.1:8080/
+  http://127.0.0.1:$APP_PORT/
+
+SSH gateway port:
+  $GATEWAY_PORT
 
 Config:
   $CONFIG_FILE
@@ -889,6 +1032,9 @@ main() {
     ui_flow
   fi
   resolve_paths
+  if [[ "$DO_UNINSTALL" -eq 0 ]]; then
+    load_configured_ports
+  fi
   ensure_admin_settings
 
   if [[ "$CREATE_SERVICE" == "" ]]; then

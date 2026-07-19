@@ -9,7 +9,7 @@ Ten projekt jest aplikacja webowa PAM Lite:
 - usluga systemd: opcjonalna, przydatna gdy aplikacja ma dzialac stale w tle.
 
 Instalator znajduje sie w pliku `install.sh`. Pobiera kod z repozytorium
-`https://github.com/chmajster/Algen-PAM`, tworzy virtualenv, instaluje zaleznosci
+`https://github.com/chmajster/Algen-Privileged-Access-Management`, tworzy virtualenv, instaluje zaleznosci
 Pythona, przygotowuje konfiguracje, wrapper `algen-pam` oraz opcjonalna usluge
 systemd i skrot `.desktop`.
 
@@ -37,6 +37,21 @@ Wymagane narzedzia systemowe:
 - `git` opcjonalnie, ale preferowany.
 
 Gdy `git` nie jest dostepny, instalator probuje pobrac archiwum `tar.gz` z GitHuba.
+
+## Bezposrednia instalacja z sieci
+
+Instalator mozna uruchomic bez klonowania repozytorium
+[chmajster/Algen-Privileged-Access-Management](https://github.com/chmajster/Algen-Privileged-Access-Management):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
+```
+
+Argumenty po `bash -s --` sa przekazywane do instalatora, na przyklad:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes --system --service --port 8081
+```
 
 ## Instalacja UI
 
@@ -108,7 +123,7 @@ Instalacja z taga:
 Nadpisanie repozytorium:
 
 ```bash
-./install.sh --silent --yes --repo https://github.com/chmajster/Algen-PAM
+./install.sh --silent --yes --repo https://github.com/chmajster/Algen-Privileged-Access-Management
 ```
 
 ## Sciezki
@@ -324,6 +339,8 @@ Instalator po instalacji sprawdza:
 --install-dir PATH    katalog instalacji
 --user                instalacja dla biezacego uzytkownika
 --system              instalacja systemowa
+--port PORT           port HTTP aplikacji (domyslnie 8080)
+--gateway-port PORT   port bramy SSH (domyslnie 2222)
 --service             utworz i wlacz usluge systemd
 --no-service          nie tworz uslugi systemd
 --desktop             utworz skrot aplikacji
@@ -371,16 +388,20 @@ Instalator ostrzega, jezeli wykryje starsza wersje. Projekt dokumentuje Python
 3.12 jako zalecany runtime. Na starszej dystrybucji zainstaluj Python 3.12 z
 pakietow dystrybucji, pyenv albo backports.
 
-### Port 8080 jest zajety
+### Port aplikacji albo bramy SSH jest zajety
 
-Wrapper przyjmuje zmienne srodowiskowe:
+Instalator sprawdza port HTTP (domyslnie `8080`) oraz port bramy SSH (domyslnie
+`2222`) przed zapisaniem konfiguracji. W trybie interaktywnym proponuje najblizszy
+wolny port i pozwala wpisac inny. W trybie cichym z `--yes` automatycznie wybiera
+zaproponowany wolny port. Porty mozna tez wskazac jawnie:
 
 ```bash
-ALGEN_PAM_PORT=8081 algen-pam
+./install.sh --port 8081 --gateway-port 2223
 ```
 
-Dla systemd zmien `ExecStart` w pliku uslugi albo uruchom aplikacje bez uslugi z
-innym portem.
+Wybrane wartosci sa zapisywane w konfiguracji i uzywane przez wrapper, usluge
+systemd oraz skrot pulpitu. Przy recznym uruchamianiu nadal mozna jednorazowo
+nadpisac port HTTP: `ALGEN_PAM_PORT=8081 algen-pam`.
 
 ### Usluga uzytkownika nie startuje po restarcie
 

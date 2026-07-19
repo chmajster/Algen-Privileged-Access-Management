@@ -7,6 +7,16 @@ INSTALLER="$ROOT_DIR/install.sh"
 bash -n "$INSTALLER"
 
 "$INSTALLER" --help >/dev/null
+"$INSTALLER" --help | grep -q -- "--port PORT"
+"$INSTALLER" --help | grep -q -- "--gateway-port PORT"
+if "$INSTALLER" --silent --yes --port 0 --dry-run >/dev/null 2>&1; then
+  echo "Installer accepted an invalid HTTP port." >&2
+  exit 1
+fi
+if "$INSTALLER" --silent --yes --gateway-port 65536 --dry-run >/dev/null 2>&1; then
+  echo "Installer accepted an invalid gateway port." >&2
+  exit 1
+fi
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "Installer parser smoke tests passed; Linux dry-run checks skipped on $(uname -s)."
