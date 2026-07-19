@@ -500,6 +500,7 @@ EOF
 }
 confirm_full_uninstall() {
   [[ "$MODE" == uninstall ]] || return 0
+  [[ "$DRY_RUN" -eq 0 ]] || return 0
   [[ "$YES" -eq 1 && ( "$MODE_EXPLICIT" -eq 1 || "$SILENT" -eq 1 ) ]] && return 0
   cat >&2 <<EOF
 
