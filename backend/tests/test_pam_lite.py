@@ -48,6 +48,13 @@ def test_local_database_provider_is_independent_of_legacy_mode(client, monkeypat
     assert response.json()["provider"] == "local_db"
 
 
+def test_identity_provider_catalog_lists_both_local_sources(client):
+    response = client.get("/api/identity/providers", headers=auth_headers(client))
+    assert response.status_code == 200, response.text
+    names = {item["name"] for item in response.json()}
+    assert {"local_os", "local_db", "ldap", "oidc"} <= names
+
+
 def test_local_os_account_login_and_auto_provision(client, monkeypatch):
     from app.identity import local_provider
 

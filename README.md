@@ -481,11 +481,14 @@ Zdarzenia ryzyka trafiaja do `risk_events`, a alerty wysokiego i krytycznego poz
 
 ## MFA i Identity Providers
 
-Linux PAM Lite obsluguje lokalne konta oraz przygotowane integracje LDAP/Active Directory i OIDC/Keycloak. Dostepne providery sa konfigurowane przez:
+Linux PAM Lite udostepnia jednoczesnie cztery jawne providery logowania:
+`local_os` dla kont z `/etc/passwd` uwierzytelnianych przez PAM, `local_db` dla
+kont zapisanych w bazie aplikacji, LDAP/Active Directory oraz OIDC/Keycloak.
+Dostepne providery sa konfigurowane przez:
 
 ```env
-PAM_AUTH_PROVIDERS=local,ldap,oidc
-PAM_DEFAULT_AUTH_PROVIDER=local
+PAM_AUTH_PROVIDERS=local_os,local_db,ldap,oidc
+PAM_DEFAULT_AUTH_PROVIDER=local_db
 PAM_LOCAL_AUTH_MODE=os
 PAM_OS_PAM_SERVICE=login
 PAM_OS_ADMIN_USERS=root
@@ -501,13 +504,17 @@ PAM_MFA_TOKEN_TTL_SECONDS=300
 PAM_STEP_UP_TTL_SECONDS=900
 ```
 
-### Local auth
+### Local users i local application database
 
-Domyslny local auth (`PAM_LOCAL_AUTH_MODE=os`) uwierzytelnia prawdziwe konto
-lokalne systemu Linux przez PAM i usluge z `PAM_OS_PAM_SERVICE`. Haslo systemowe
+Provider `local_os` uwierzytelnia prawdziwe konto lokalne systemu Linux z
+`/etc/passwd` przez PAM i usluge z `PAM_OS_PAM_SERVICE`. Haslo systemowe
 nie jest zapisywane w bazie aplikacji. Po pierwszym poprawnym logowaniu konto jest
 automatycznie tworzone w tabeli `users`, gdzie przechowywane sa tylko rola, MFA i
 metadane. Uzytkownicy wymienieni w `PAM_OS_ADMIN_USERS` otrzymuja role `admin`.
+
+Provider `local_db` sprawdza haslo zapisane jako bezpieczny hash w lokalnej bazie
+aplikacji. Oba providery sa dostepne rownoczesnie; `PAM_LOCAL_AUTH_MODE` sluzy
+wylacznie do obslugi starszych klientow wysylajacych provider `local`.
 
 Proces bez uprawnien moze zwykle sprawdzac przez `pam_unix` tylko haslo konta, na
 ktorym sam dziala. Uwierzytelnianie wielu lokalnych kont wymaga odpowiednio
@@ -523,8 +530,7 @@ odpowiednio skonfigurowanego zewnetrznego stosu PAM.
 Stan backendu mozna sprawdzic bez logowania przez `GET /api/health`. Szczegoly
 bledu inicjalizacji sa zapisywane w journalu uslugi bez zapisywania hasla.
 
-Tryb `PAM_LOCAL_AUTH_MODE=database` pozostaje dostepny tylko jako jawna opcja
-zgodnosci wstecznej. Jesli konto ma wlaczone MFA, backend po poprawnym
+Jesli konto ma wlaczone MFA, backend po poprawnym
 uwierzytelnieniu tworzy `mfa_challenges`; pelny JWT jest wydawany dopiero po TOTP
 albo jednorazowym recovery code.
 

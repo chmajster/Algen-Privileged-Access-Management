@@ -67,8 +67,9 @@ Tryby `--silent`, `--yes` i `--dry-run` pomijają odliczanie.
 
 Domyślne wartości pozwalają przejść kreator klawiszem Enter: instalacja
 systemowa w `/opt/algen-pam`, usługa systemd włączona, skrót desktopowy
-wyłączony, porty `8080` i `2222`, uwierzytelnianie Linux PAM oraz automatycznie
-wygenerowane hasło administratora.
+wyłączony, porty `8080` i `2222` oraz automatycznie wygenerowane hasło
+administratora w lokalnej bazie aplikacji. Formularz logowania udostępnia
+równocześnie konta Linux z `/etc/passwd`, lokalną bazę aplikacji, LDAP i OIDC.
 
 Pełna deinstalacja wybrana z menu wymaga wpisania `USUN`. Jawne
 `--uninstall --yes` może pominąć to potwierdzenie w trybie bezobsługowym.
