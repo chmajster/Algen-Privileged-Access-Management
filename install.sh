@@ -44,6 +44,7 @@ ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-}"
 ADMIN_PASSWORD=""
 ADMIN_PASSWORD_GENERATED=0
 ADMIN_PASSWORD_SUPPLIED=0
+ADMIN_PASSWORD_INTERNAL=0
 ADMIN_USER_EXPLICIT=0
 ADMIN_EMAIL_EXPLICIT=0
 LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
@@ -442,6 +443,19 @@ prompt_yes_no() {
     esac
   done
 }
+default_admin_username() {
+  if [[ "$LOCAL_AUTH_MODE" == os ]]; then
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]] && id "$SUDO_USER" >/dev/null 2>&1; then
+      printf '%s' "$SUDO_USER"
+    elif [[ "$TARGET_USER" != algen-pam ]] && id "$TARGET_USER" >/dev/null 2>&1; then
+      printf '%s' "$TARGET_USER"
+    else
+      printf root
+    fi
+  else
+    printf '%s' "$TARGET_USER"
+  fi
+}
 interactive_install_prompts() {
   [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
   marker_valid && return 0
@@ -468,9 +482,9 @@ interactive_install_prompts() {
   choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
   choice="${choice:-1}"
   case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
-  [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
+  [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$(default_admin_username)}")" || die "Operacja anulowana."
   [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(prompt_value "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
-  if [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
+  if [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
     if prompt_yes_no "Wygenerować bezpieczne hasło administratora automatycznie?" yes; then
       ADMIN_PASSWORD_GENERATED=1
     else
@@ -897,7 +911,12 @@ full_uninstall() {
 
 # ---- main operation flow ---------------------------------------------------
 prepare_admin_defaults() {
-  [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$TARGET_USER"
+  if [[ "$LOCAL_AUTH_MODE" == os && "$ADMIN_USER_EXPLICIT" -eq 0 && "$ADMIN_USER" == algen-pam ]]; then
+    ADMIN_USER="$(default_admin_username)"
+    if [[ "$ADMIN_EMAIL_EXPLICIT" -eq 0 ]]; then ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"; fi
+    warn "Konto usługi algen-pam nie może logować się przez PAM. Administratorem będzie konto systemowe $ADMIN_USER."
+  fi
+  [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(default_admin_username)"
   [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"
   [[ "$LOCAL_AUTH_MODE" != os || "$DRY_RUN" -eq 1 || ( "$SCOPE" == system && "$ADMIN_USER" == algen-pam ) ]] \
     || id "$ADMIN_USER" >/dev/null 2>&1 || die "OS administrator account '$ADMIN_USER' does not exist."
@@ -905,7 +924,10 @@ prepare_admin_defaults() {
 prepare_admin_password() {
   [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0
   if [[ -z "$ADMIN_PASSWORD" && "$DRY_RUN" -eq 1 ]]; then ADMIN_PASSWORD=dry-run-placeholder
-  elif [[ -z "$ADMIN_PASSWORD" ]]; then ADMIN_PASSWORD="$(generate_secret 18)"; ADMIN_PASSWORD_GENERATED=1; fi
+  elif [[ -z "$ADMIN_PASSWORD" ]]; then
+    ADMIN_PASSWORD="$(generate_secret 18)"
+    if [[ "$LOCAL_AUTH_MODE" == database ]]; then ADMIN_PASSWORD_GENERATED=1; else ADMIN_PASSWORD_INTERNAL=1; fi
+  fi
   [[ ${#ADMIN_PASSWORD} -ge 12 ]] || die "Administrator password must contain at least 12 characters."
 }
 prepare_logging() { target_cmd mkdir -p "$LOG_DIR"; target_cmd touch "$LOG_FILE"; target_cmd chmod 0600 "$LOG_FILE"; }
@@ -964,7 +986,7 @@ first_host_ipv4() {
   printf '%s' "${candidate:-ADRES_IP_SERWERA}"
 }
 print_generated_admin_password() {
-  [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 && "$MODE" != uninstall && -n "$ADMIN_PASSWORD" ]] || return 0
+  [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 && "$ADMIN_PASSWORD_INTERNAL" -eq 0 && "$MODE" != uninstall && -n "$ADMIN_PASSWORD" ]] || return 0
   cat <<EOF
 
 Wygenerowane hasło administratora — zostanie pokazane tylko raz:
@@ -973,6 +995,17 @@ Wygenerowane hasło administratora — zostanie pokazane tylko raz:
   hasło:      $ADMIN_PASSWORD
 
 Zapisz je przed zamknięciem terminala.
+EOF
+}
+print_os_login_hint() {
+  [[ "$LOCAL_AUTH_MODE" == os && ( "$MODE" == install || "$MODE" == reinstall ) ]] || return 0
+  cat <<EOF
+
+Logowanie Linux PAM:
+  użytkownik: $ADMIN_USER
+  hasło: hasło konta $ADMIN_USER w systemie Linux
+
+Instalator nie tworzy ani nie zmienia hasła konta systemowego.
 EOF
 }
 print_completion() {
@@ -1007,6 +1040,7 @@ Log instalatora:
   $LOG_FILE
 EOF
       print_generated_admin_password
+      print_os_login_hint
       ;;
     backup) ok "Kopia bezpieczeństwa jest dostępna w: $STATE_BACKUP_DIR" ;;
     remove-app) ok "Kod aplikacji i integracje zostały usunięte; stan instalacji zachowano." ;;

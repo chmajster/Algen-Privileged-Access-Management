@@ -117,11 +117,13 @@ virtualenv nie są kopiowane.
 PAM_LOCAL_AUTH_MODE=database ./install.sh --install --generate-admin-password
 ```
 
-Bootstrap korzysta z `python -m app.bootstrap_admin`. Hasło jest generowane albo
-pobierane z argumentu, przekazywane tylko do bootstrapu, usuwane z `.env`, a
-zmienna powłoki jest czyszczona przez `unset`. Wygenerowane hasło jest pokazane
-raz. Hasła, tokeny, klucze prywatne i zawartość `.env` nie trafiają do logu ani
-do outputu `--verbose`/`--dry-run`.
+Bootstrap korzysta z `python -m app.bootstrap_admin`. W trybie `database` hasło
+jest generowane albo pobierane z argumentu, przekazywane tylko do bootstrapu,
+usuwane z `.env`, a zmienna powłoki jest czyszczona przez `unset`. Wygenerowane
+hasło jest pokazane raz. W domyślnym trybie Linux PAM instalator nie pokazuje
+hasła aplikacji: należy użyć istniejącego hasła wybranego konta systemowego.
+Przy uruchomieniu bez `sudo` jako root domyślnym administratorem PAM jest `root`,
+a nie techniczne konto usługi `algen-pam`.
 
 Domyślne `change-me` i `change-this-32-byte-key` z `.env.example` są zastępowane
 losowymi sekretami. Zapis `.env` jest atomowy i obsługuje spacje, `#` i znaki

@@ -83,10 +83,11 @@ function fmt(value) {
 }
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const res = await fetch(path, { ...options, headers });
-  if (res.status === 401) {
+  const { auth = true, ...requestOptions } = options;
+  const headers = { "Content-Type": "application/json", ...(requestOptions.headers || {}) };
+  if (auth && state.token) headers.Authorization = `Bearer ${state.token}`;
+  const res = await fetch(path, { ...requestOptions, headers });
+  if (res.status === 401 && auth) {
     localStorage.removeItem("pam_token");
     state.token = null;
     showLogin();
@@ -1209,9 +1210,9 @@ $("#loginForm").addEventListener("submit", async (event) => {
   try {
     const provider = $("#loginProvider").value;
     if (provider === "oidc") {
-      const result = await api("/api/auth/oidc/login");
+      const result = await api("/api/auth/oidc/login", { auth: false });
       if (result.detail.url.startsWith("/api/")) {
-        const token = await api(result.detail.url);
+        const token = await api(result.detail.url, { auth: false });
         state.token = token.access_token;
         localStorage.setItem("pam_token", state.token);
         await showApp();
@@ -1220,7 +1221,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
       window.location.href = result.detail.url;
       return;
     }
-    const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: $("#loginUsername").value, password: $("#loginPassword").value, provider }) });
+    const result = await api("/api/auth/login", { auth: false, method: "POST", body: JSON.stringify({ username: $("#loginUsername").value, password: $("#loginPassword").value, provider }) });
     if (result.mfa_required) {
       state.pendingMfaLogin = result;
       $("#loginForm").classList.add("d-none");
@@ -1238,7 +1239,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
 $("#mfaLoginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    const result = await api("/api/mfa/verify", { method: "POST", body: JSON.stringify({ mfa_token: state.pendingMfaLogin?.mfa_token, challenge_id: state.pendingMfaLogin?.challenge_id, code: $("#loginMfaCode").value, recovery_code: $("#loginRecoveryCode").checked }) });
+    const result = await api("/api/mfa/verify", { auth: false, method: "POST", body: JSON.stringify({ mfa_token: state.pendingMfaLogin?.mfa_token, challenge_id: state.pendingMfaLogin?.challenge_id, code: $("#loginMfaCode").value, recovery_code: $("#loginRecoveryCode").checked }) });
     state.token = result.access_token;
     localStorage.setItem("pam_token", state.token);
     state.pendingMfaLogin = null;

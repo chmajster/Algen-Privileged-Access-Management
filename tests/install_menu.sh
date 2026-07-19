@@ -48,6 +48,14 @@ if prompt_yes_no "test" no; then
   exit 1
 fi
 
+# The system service account has no login shell and must never become the
+# default PAM administrator.
+unset SUDO_USER
+LOCAL_AUTH_MODE=os; TARGET_USER=algen-pam
+[[ "$(default_admin_username)" == root ]]
+LOCAL_AUTH_MODE=database
+[[ "$(default_admin_username)" == algen-pam ]]
+
 # Without an explicit mode the installer selects update only for an existing
 # installation; otherwise it selects a fresh install.
 installation_present() { return 0; }
