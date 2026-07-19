@@ -491,6 +491,9 @@ ktorym sam dziala. Uwierzytelnianie wielu lokalnych kont wymaga odpowiednio
 uprzywilejowanego stosu PAM, na przyklad SSSD. Niedostepny backend PAM zwraca HTTP
 503 zamiast niekontrolowanego bledu 500.
 
+Stan backendu mozna sprawdzic bez logowania przez `GET /api/health`. Szczegoly
+bledu inicjalizacji sa zapisywane w journalu uslugi bez zapisywania hasla.
+
 Tryb `PAM_LOCAL_AUTH_MODE=database` pozostaje dostepny tylko jako jawna opcja
 zgodnosci wstecznej. Jesli konto ma wlaczone MFA, backend po poprawnym
 uwierzytelnieniu tworzy `mfa_challenges`; pelny JWT jest wydawany dopiero po TOTP

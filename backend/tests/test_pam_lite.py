@@ -1,4 +1,5 @@
 from datetime import timedelta
+import importlib
 from types import SimpleNamespace
 
 from app.config import settings
@@ -73,6 +74,21 @@ def test_local_os_backend_error_returns_503(client, monkeypatch):
 
     monkeypatch.setattr(local_provider, "authenticate_os_account", unavailable)
     response = client.post("/api/auth/login", json={"username": "system_user", "password": "password", "provider": "local"})
+    assert response.status_code == 503
+    assert "PAM" in response.json()["detail"]
+
+
+def test_health_returns_503_when_os_pam_is_unavailable(client, monkeypatch):
+    from app.identity.local_provider import LocalAuthenticationBackendError
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(settings, "pam_local_auth_mode", "os")
+
+    def unavailable():
+        raise LocalAuthenticationBackendError("libpam missing")
+
+    monkeypatch.setattr(main_module, "validate_os_auth_backend", unavailable)
+    response = client.get("/api/health")
     assert response.status_code == 503
     assert "PAM" in response.json()["detail"]
 

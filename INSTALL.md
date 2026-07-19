@@ -456,6 +456,26 @@ najpierw pobierane, sprawdzane przez `tar` i rozpakowywane w katalogu tymczasowy
 Dopiero po poprawnej weryfikacji instalator wymienia pliki aplikacji, zachowujac
 konfiguracje, dane i logi.
 
+### Linux PAM authentication is unavailable
+
+Endpoint `/api/health` sprawdza rowniez dostepnosc backendu PAM. Diagnostyka:
+
+```bash
+curl -i http://127.0.0.1:8080/api/health
+sudo journalctl -u algen-pam -n 100 --no-pager
+```
+
+Na Debianie/Ubuntu wymagane sa biblioteka systemowa i modul Pythona:
+
+```bash
+sudo apt-get install -y libpam0g
+sudo /opt/algen-pam/backend/.venv/bin/pip install python-pam==2.0.2
+sudo systemctl restart algen-pam
+```
+
+Aktualny instalator wykonuje te kroki automatycznie i nie konczy update, dopoki
+PAM, systemd oraz `/api/health` nie przejda walidacji.
+
 ### Python starszy niz 3.12
 
 Instalator ostrzega, jezeli wykryje starsza wersje. Projekt dokumentuje Python
