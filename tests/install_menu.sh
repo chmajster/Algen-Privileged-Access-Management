@@ -30,4 +30,14 @@ assert_mapping __timeout__ update
 MODE=""; if map_existing_action invalid; then status=0; else status=$?; fi
 [[ "$status" -eq 1 && -z "$MODE" ]]
 
+# A CLI mode and a previously completed interactive choice must both bypass
+# the menu, preventing the former double-menu regression in main().
+MODE=update; MODE_EXPLICIT=1; MODE_SELECTED_INTERACTIVELY=0
+interactive_mode_selection
+[[ "$MODE" == update && "$MODE_SELECTED_INTERACTIVELY" -eq 0 ]]
+
+MODE=reinstall; MODE_EXPLICIT=0; MODE_SELECTED_INTERACTIVELY=1
+interactive_mode_selection
+[[ "$MODE" == reinstall && "$MODE_SELECTED_INTERACTIVELY" -eq 1 ]]
+
 printf 'Installer menu mapping tests passed.\n'

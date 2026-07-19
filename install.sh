@@ -281,7 +281,6 @@ determine_mode() {
     else MODE=install; fi
   fi
   case "$MODE" in
-    install) marker_valid && die "An installation marker already exists; use --update or --reinstall." ;;
     update|backup|remove-app|uninstall) installation_present || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode '$MODE' requires a valid installation marker in $INSTALL_DIR."; } ;;
     reinstall) marker_valid || { [[ "$DRY_RUN" -eq 1 ]] || die "Mode 'reinstall' requires a valid installation marker in $INSTALL_DIR."; } ;;
   esac
@@ -413,19 +412,19 @@ interactive_mode_selection() {
     fi
   done
 }
-ui_input() {
+prompt_value() {
   local title="$1" prompt="$2" default="$3" result=""
   : "$title"
   result="$(read_from_tty "$prompt [$default]: ")" || return 1
   result="${result:-$default}"
   printf '%s' "$result"
 }
-ui_yesno() {
+prompt_yes_no() {
   local prompt="$1" answer=""
   answer="$(read_from_tty "$prompt [y/N]: ")" || return 1
   [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
 }
-interactive_install_wizard() {
+interactive_install_prompts() {
   [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
   marker_valid && return 0
   have_tty || die "No interactive terminal. Use --silent --yes with explicit options."
@@ -438,23 +437,23 @@ interactive_install_wizard() {
     resolve_identity; resolve_paths
   fi
   if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]]; then
-    value="$(ui_input "Algen PAM" "Katalog instalacyjny" "$INSTALL_DIR")" || die "Operacja anulowana."
+    value="$(prompt_value "Algen PAM" "Katalog instalacyjny" "$INSTALL_DIR")" || die "Operacja anulowana."
     INSTALL_DIR="$value"; resolve_paths
   fi
   if [[ -z "$SERVICE_CHOICE" ]]; then
-    ui_yesno "Utworzyć usługę systemd?" && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
+    prompt_yes_no "Utworzyć usługę systemd?" && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
   fi
-  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then ui_yesno "Utworzyć skrót desktopowy?" && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
-  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(ui_input "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
-  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(ui_input "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
+  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then prompt_yes_no "Utworzyć skrót desktopowy?" && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
+  if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(prompt_value "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
+  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(prompt_value "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
   printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
   choice="$(read_from_tty "Tryb uwierzytelniania [1]: ")" || die "Operacja anulowana."
   choice="${choice:-1}"
   case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
-  [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(ui_input "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
-  [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(ui_input "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
+  [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
+  [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(prompt_value "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
   if [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
-    if ui_yesno "Wygenerować bezpieczne hasło administratora automatycznie?"; then
+    if prompt_yes_no "Wygenerować bezpieczne hasło administratora automatycznie?"; then
       ADMIN_PASSWORD_GENERATED=1
     else
       read -r -s -p 'Hasło administratora (minimum 12 znaków): ' ADMIN_PASSWORD </dev/tty || die "Operacja anulowana."
@@ -983,7 +982,7 @@ main() {
   section "Wybór operacji"
   interactive_mode_selection                # 5/6. Dokładnie jeden wybór operacji
   [[ "$MODE" != cancel ]] || return 0
-  interactive_install_wizard                # Kreator wyłącznie dla nowej instalacji
+  interactive_install_prompts               # Pytania tekstowe wyłącznie dla nowej instalacji
   determine_mode
   [[ -n "$SERVICE_CHOICE" ]] || { if [[ -f "$SERVICE_FILE" ]]; then SERVICE_CHOICE=1; else SERVICE_CHOICE=0; fi; }
   load_existing_configuration               # 7. Istniejąca konfiguracja
