@@ -19,7 +19,7 @@ def ensure_admin_user(db: Session, username: str, email: str, password: str, upd
         existing.email = email or existing.email
         existing.role = "admin"
         existing.is_active = True
-        existing.auth_provider = "local"
+        existing.auth_provider = "local_db"
         existing.mfa_required = True
         if update_password:
             existing.password_hash = hash_password(password)
@@ -34,7 +34,7 @@ def ensure_admin_user(db: Session, username: str, email: str, password: str, upd
         password_hash=hash_password(password),
         role="admin",
         is_active=True,
-        auth_provider="local",
+        auth_provider="local_db",
         email_verified=True,
         mfa_required=True,
         last_password_change_at=utcnow(),

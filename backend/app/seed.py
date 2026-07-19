@@ -29,7 +29,7 @@ def seed_demo_data(db: Session) -> None:
                     role=role,
                     is_active=True,
                     ssh_public_key=DEMO_SSH_KEY,
-                    auth_provider="local",
+                    auth_provider="local_db",
                     mfa_required=role == "admin",
                 )
             )

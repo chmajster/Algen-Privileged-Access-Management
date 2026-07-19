@@ -18,16 +18,17 @@
           <div>
             <label class="form-label" for="loginProvider">Provider</label>
             <select id="loginProvider" class="form-select">
-              <option value="local">local (Linux OS)</option>
+              <option value="local_os">Local users (/etc/passwd)</option>
+              <option value="local_db" selected>Local application database</option>
               <option value="ldap">LDAP</option>
               <option value="oidc">OIDC</option>
             </select>
           </div>
-          <div>
+          <div id="loginUsernameField">
             <label class="form-label" for="loginUsername">Username</label>
             <input id="loginUsername" class="form-control" autocomplete="username" required>
           </div>
-          <div>
+          <div id="loginPasswordField">
             <label class="form-label" for="loginPassword">Password</label>
             <input id="loginPassword" class="form-control" type="password" autocomplete="current-password" required>
           </div>
@@ -43,7 +44,7 @@
           <button class="btn btn-primary w-100" type="submit"><i class="bi bi-shield-check"></i> Verify</button>
         </form>
         <div class="demo-logins">
-          <span>Use a local Linux operating-system account.</span>
+          <span>Choose Linux users, the application database, LDAP, or OIDC.</span>
         </div>
       </main>
     </div>

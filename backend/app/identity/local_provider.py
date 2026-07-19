@@ -66,7 +66,7 @@ def _provision_os_user(db: DBSession, username: str, account) -> User:
         password_hash=hash_password(secrets.token_urlsafe(32)),
         role="admin" if username in _admin_usernames() else "user",
         is_active=True,
-        auth_provider="local",
+        auth_provider="local_os",
         external_id=f"uid:{account.pw_uid}",
         display_name=(account.pw_gecos or username).split(",", 1)[0],
         email_verified=False,
@@ -77,13 +77,14 @@ def _provision_os_user(db: DBSession, username: str, account) -> User:
     return user
 
 
-def authenticate_local(db: DBSession, username: str, password: str) -> tuple[User | None, list[dict]]:
-    if settings.pam_local_auth_mode == "database":
-        user = db.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.password_hash):
-            return None, []
-        return user, []
+def authenticate_local_database(db: DBSession, username: str, password: str) -> tuple[User | None, list[dict]]:
+    user = db.query(User).filter(User.username == username).first()
+    if not user or user.auth_provider not in {"local", "local_db", "local_os"} or not verify_password(password, user.password_hash):
+        return None, []
+    return user, [{"name": "application-database", "source": "local_db"}]
 
+
+def authenticate_local_os(db: DBSession, username: str, password: str) -> tuple[User | None, list[dict]]:
     account = _os_account(username)
     if account is None or not authenticate_os_account(username, password):
         return None, []
@@ -94,12 +95,19 @@ def authenticate_local(db: DBSession, username: str, password: str) -> tuple[Use
             return None, []
         user = _provision_os_user(db, username, account)
     else:
-        if user.auth_provider != "local":
+        if user.auth_provider not in {"local", "local_db", "local_os"}:
             return None, []
-        user.auth_provider = "local"
+        user.auth_provider = "local_os"
         user.external_id = f"uid:{account.pw_uid}"
         user.display_name = user.display_name or (account.pw_gecos or username).split(",", 1)[0]
         if username in _admin_usernames():
             user.role = "admin"
             user.mfa_required = True
     return user, [{"name": "linux-local", "source": "pam"}]
+
+
+def authenticate_local(db: DBSession, username: str, password: str) -> tuple[User | None, list[dict]]:
+    """Compatibility backend for clients still sending provider=local."""
+    if settings.pam_local_auth_mode == "database":
+        return authenticate_local_database(db, username, password)
+    return authenticate_local_os(db, username, password)

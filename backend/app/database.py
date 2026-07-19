@@ -126,7 +126,7 @@ def _ensure_legacy_columns() -> None:
             conn,
             "users",
             {
-                "auth_provider": "VARCHAR(32) DEFAULT 'local' NOT NULL",
+                "auth_provider": "VARCHAR(32) DEFAULT 'local_db' NOT NULL",
                 "external_id": "VARCHAR(255)",
                 "display_name": "VARCHAR(255)",
                 "email_verified": "BOOLEAN DEFAULT 0 NOT NULL",

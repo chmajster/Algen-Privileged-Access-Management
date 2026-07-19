@@ -628,6 +628,12 @@ prepare_config() {
   set_env_value "$editor" PAM_GATEWAY_HOST_KEY_PATH "$DATA_DIR/gateway_host_key"
   set_env_value "$editor" PAM_SESSION_LOG_DIR "$LOG_DIR/sessions"
   set_env_value "$editor" PAM_LOCAL_AUTH_MODE "$LOCAL_AUTH_MODE"
+  set_env_value "$editor" PAM_AUTH_PROVIDERS "local_os,local_db,ldap,oidc"
+  if [[ "$LOCAL_AUTH_MODE" == database ]]; then
+    set_env_value "$editor" PAM_DEFAULT_AUTH_PROVIDER "local_db"
+  else
+    set_env_value "$editor" PAM_DEFAULT_AUTH_PROVIDER "local_os"
+  fi
   set_env_value "$editor" PAM_DEFAULT_ADMIN_USER "$ADMIN_USER"
   set_env_value "$editor" PAM_DEFAULT_ADMIN_EMAIL "$ADMIN_EMAIL"
   set_env_value "$editor" PAM_OS_ADMIN_USERS "$ADMIN_USER"

@@ -26,7 +26,7 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     ssh_public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    auth_provider: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    auth_provider: Mapped[str] = mapped_column(String(32), default="local_db", index=True)
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)

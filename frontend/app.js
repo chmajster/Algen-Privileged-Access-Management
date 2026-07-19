@@ -1205,6 +1205,17 @@ async function showApp() {
   await refresh();
 }
 
+function updateLoginProviderFields() {
+  const oidc = $("#loginProvider").value === "oidc";
+  $("#loginUsernameField").classList.toggle("d-none", oidc);
+  $("#loginPasswordField").classList.toggle("d-none", oidc);
+  $("#loginUsername").required = !oidc;
+  $("#loginPassword").required = !oidc;
+}
+
+$("#loginProvider").addEventListener("change", updateLoginProviderFields);
+updateLoginProviderFields();
+
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {

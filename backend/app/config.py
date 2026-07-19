@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     pam_critical_risk_score: int = 80
     pam_high_risk_score: int = 60
     pam_medium_risk_score: int = 30
-    pam_auth_providers: str = "local,ldap,oidc"
-    pam_default_auth_provider: str = "local"
+    pam_auth_providers: str = "local_os,local_db,ldap,oidc"
+    pam_default_auth_provider: str = "local_db"
     pam_local_auth_mode: str = "os"
     pam_os_pam_service: str = "login"
     pam_os_admin_users: str = "root"

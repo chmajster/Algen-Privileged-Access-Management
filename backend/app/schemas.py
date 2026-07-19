@@ -30,7 +30,7 @@ class UserBase(BaseModel):
     role: str = "user"
     is_active: bool = True
     ssh_public_key: str | None = None
-    auth_provider: str = "local"
+    auth_provider: str = "local_db"
     external_id: str | None = None
     display_name: str | None = None
     email_verified: bool = False
