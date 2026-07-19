@@ -56,6 +56,16 @@ LOCAL_AUTH_MODE=os; TARGET_USER=algen-pam
 LOCAL_AUTH_MODE=database
 [[ "$(default_admin_username)" == algen-pam ]]
 
+(
+  LOCAL_AUTH_MODE=os; SCOPE=system; TARGET_USER=algen-pam; SERVICE_CHOICE=1
+  ADMIN_USER=algen-pam; ADMIN_EMAIL=algen-pam@localhost.localdomain
+  ADMIN_USER_EXPLICIT=0; ADMIN_EMAIL_EXPLICIT=0
+  ADMIN_PASSWORD=""; ADMIN_PASSWORD_SUPPLIED=0; ADMIN_PASSWORD_GENERATED=0
+  DRY_RUN=1
+  prepare_admin_defaults
+  [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
+) 2>/dev/null
+
 # Without an explicit mode the installer selects update only for an existing
 # installation; otherwise it selects a fresh install.
 installation_present() { return 0; }
