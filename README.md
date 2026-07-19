@@ -45,6 +45,10 @@ cichej instalacji CLI. Kreator nie używa kolorów, `whiptail` ani `dialog`:
 ./install.sh --silent --yes --system --service --install-dir /opt/algen-pam
 ```
 
+W kreatorze tekstowym Enter akceptuje ustawienia domyślne: instalację systemową,
+usługę systemd, brak skrótu desktopowego, porty `8080`/`2222`, Linux PAM i
+automatycznie wygenerowane hasło administratora.
+
 Instalator sprawdza port HTTP `8080` i port bramy SSH `2222`. Konflikt w trybie
 silent jest bledem; automatyczne wyszukanie wolnego portu wymaga jawnej opcji
 `--auto-port`. Podczas aktualizacji zachowywane sa porty istniejacej instancji.

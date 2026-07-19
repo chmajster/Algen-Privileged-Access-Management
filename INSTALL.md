@@ -61,6 +61,11 @@ ma zawsze pierwszeństwo i wyłącza menu. Kreator pierwszej instalacji używa t
 zwykłych komunikatów i pytań tekstowych w terminalu. Nie używa kolorów,
 `whiptail`, `dialog` ani sekwencji sterujących ANSI.
 
+Domyślne wartości pozwalają przejść kreator klawiszem Enter: instalacja
+systemowa w `/opt/algen-pam`, usługa systemd włączona, skrót desktopowy
+wyłączony, porty `8080` i `2222`, uwierzytelnianie Linux PAM oraz automatycznie
+wygenerowane hasło administratora.
+
 Pełna deinstalacja wybrana z menu wymaga wpisania `USUN`. Jawne
 `--uninstall --yes` może pominąć to potwierdzenie w trybie bezobsługowym.
 

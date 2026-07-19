@@ -40,6 +40,14 @@ MODE=reinstall; MODE_EXPLICIT=0; MODE_SELECTED_INTERACTIVELY=1
 interactive_mode_selection
 [[ "$MODE" == reinstall && "$MODE_SELECTED_INTERACTIVELY" -eq 1 ]]
 
+# Enter accepts the configured yes/no default used by the text prompts.
+read_from_tty() { printf ''; }
+prompt_yes_no "test" yes
+if prompt_yes_no "test" no; then
+  echo 'No-default prompt accepted an empty answer.' >&2
+  exit 1
+fi
+
 # Without an explicit mode the installer selects update only for an existing
 # installation; otherwise it selects a fresh install.
 installation_present() { return 0; }

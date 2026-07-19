@@ -422,9 +422,17 @@ prompt_value() {
   printf '%s' "$result"
 }
 prompt_yes_no() {
-  local prompt="$1" answer=""
-  answer="$(read_from_tty "$prompt [y/N]: ")" || return 1
-  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
+  local prompt="$1" default="${2:-no}" answer="" suffix="[y/N]"
+  [[ "$default" == yes ]] && suffix="[Y/n]"
+  while true; do
+    answer="$(read_from_tty "$prompt $suffix: ")" || return 1
+    case "$answer" in
+      "") [[ "$default" == yes ]]; return ;;
+      y|Y|yes|YES|Yes|t|T|tak|TAK|Tak) return 0 ;;
+      n|N|no|NO|No|nie|NIE|Nie) return 1 ;;
+      *) printf '%s\n' 'Wpisz y albo n.' >/dev/tty ;;
+    esac
+  done
 }
 interactive_install_prompts() {
   [[ "$SILENT" -eq 0 && "$YES" -eq 0 && "$DRY_RUN" -eq 0 && "$MODE" != update && "$MODE" != reinstall && "$MODE" != backup && "$MODE" != remove-app && "$MODE" != uninstall ]] || return 0
@@ -443,9 +451,9 @@ interactive_install_prompts() {
     INSTALL_DIR="$value"; resolve_paths
   fi
   if [[ -z "$SERVICE_CHOICE" ]]; then
-    prompt_yes_no "Utworzyć usługę systemd?" && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
+    prompt_yes_no "Utworzyć usługę systemd?" yes && SERVICE_CHOICE=1 || SERVICE_CHOICE=0
   fi
-  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then prompt_yes_no "Utworzyć skrót desktopowy?" && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
+  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then prompt_yes_no "Utworzyć skrót desktopowy?" no && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(prompt_value "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(prompt_value "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
   printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
@@ -455,7 +463,7 @@ interactive_install_prompts() {
   [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$TARGET_USER}")" || die "Operacja anulowana."
   [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(prompt_value "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
   if [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
-    if prompt_yes_no "Wygenerować bezpieczne hasło administratora automatycznie?"; then
+    if prompt_yes_no "Wygenerować bezpieczne hasło administratora automatycznie?" yes; then
       ADMIN_PASSWORD_GENERATED=1
     else
       read -r -s -p 'Hasło administratora (minimum 12 znaków): ' ADMIN_PASSWORD </dev/tty || die "Operacja anulowana."
