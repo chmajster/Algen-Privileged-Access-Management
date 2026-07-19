@@ -24,7 +24,13 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 bash "$INSTALLER" --silent --yes --user --no-service --dry-run >/dev/null
-bash "$INSTALLER" --silent --yes --no-service --dry-run | grep -F "/opt/algen-pam" >/dev/null
+DRY_RUN_OUTPUT="$(bash "$INSTALLER" --silent --yes --no-service --dry-run)"
+grep -F "/opt/algen-pam" <<<"$DRY_RUN_OUTPUT" >/dev/null
+grep -F "/archive/refs/heads/main.tar.gz" <<<"$DRY_RUN_OUTPUT" >/dev/null
+if grep -E '^\[dry-run\] git clone' <<<"$DRY_RUN_OUTPUT" >/dev/null; then
+  echo "Installer dry-run unexpectedly uses git clone." >&2
+  exit 1
+fi
 bash "$INSTALLER" --silent --yes --user --no-service --admin-user admin --admin-email admin@example.local --admin-password admin123 --dry-run >/dev/null
 bash "$INSTALLER" --uninstall --user --yes --dry-run --keep-config --keep-logs >/dev/null
 

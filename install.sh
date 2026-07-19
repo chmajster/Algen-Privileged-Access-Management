@@ -430,9 +430,9 @@ detect_package_manager() {
 
 package_list() {
   case "$PACKAGE_MANAGER" in
-    apt) echo "python3 python3-venv python3-pip curl ca-certificates tar unzip git" ;;
-    dnf) echo "python3 python3-pip curl ca-certificates tar unzip git" ;;
-    pacman) echo "python python-pip curl ca-certificates tar unzip git" ;;
+    apt) echo "python3 python3-venv python3-pip curl ca-certificates tar" ;;
+    dnf) echo "python3 python3-pip curl ca-certificates tar" ;;
+    pacman) echo "python python-pip curl ca-certificates tar" ;;
     *) echo "" ;;
   esac
 }
@@ -720,73 +720,69 @@ archive_url() {
 }
 
 download_archive() {
-  local destination="$1"
   local url
   url="$(archive_url)"
   local tmp_archive
   tmp_archive="$(mktemp)"
-  log "Downloading source archive from $url."
+  log "Downloading the latest source archive from $url (git clone is not used)."
   if command -v curl >/dev/null 2>&1; then
-    run curl -fsSL "$url" -o "$tmp_archive"
+    run curl -fsSL -H "Cache-Control: no-cache" "$url" -o "$tmp_archive"
   elif command -v wget >/dev/null 2>&1; then
-    run wget -q "$url" -O "$tmp_archive"
+    run wget -q --no-cache "$url" -O "$tmp_archive"
   else
     abort "curl or wget is required to download source archives."
   fi
   local tmp_dir
   tmp_dir="$(mktemp -d)"
+  run tar -tzf "$tmp_archive" >/dev/null
   run tar -xzf "$tmp_archive" -C "$tmp_dir"
   local extracted
   extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   [[ -n "$extracted" ]] || abort "Downloaded archive did not contain a source directory."
-  run mkdir -p "$destination"
-  run cp -a "$extracted"/. "$destination"/
+  deploy_source "$extracted"
   run rm -f "$tmp_archive"
   run rm -rf "$tmp_dir"
 }
 
+deploy_source() {
+  local source_dir="$1"
+  if [[ "$DO_UPDATE" -eq 1 || "$REINSTALL_APP" -eq 1 ]]; then
+    clean_application_files_keep_data
+  fi
+  run mkdir -p "$INSTALL_DIR"
+  run cp -a "$source_dir"/. "$INSTALL_DIR"/
+}
+
+copy_local_source() {
+  local source_dir="$1"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local staged="$tmp_dir/source"
+  mkdir -p "$staged"
+  tar -C "$source_dir" \
+    --exclude='./.git' \
+    --exclude='./.env' \
+    --exclude='./data' \
+    --exclude='./backend/.venv' \
+    --exclude='*/__pycache__' \
+    --exclude='*/.pytest_cache' \
+    -cf - . | tar -C "$staged" -xf -
+  deploy_source "$staged"
+  rm -rf "$tmp_dir"
+}
+
 fetch_source() {
-  log "Fetching application source."
+  log "Fetching the latest application source without git clone."
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] fetch $REPO_URL into $INSTALL_DIR"
+    echo "[dry-run] download latest archive from $(archive_url) into $INSTALL_DIR"
     return 0
   fi
-  if command -v git >/dev/null 2>&1; then
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
-      log "Updating existing git checkout in $INSTALL_DIR."
-      run git -C "$INSTALL_DIR" fetch --tags --prune
-      if [[ -n "$TAG_NAME" ]]; then
-        run git -C "$INSTALL_DIR" checkout "$TAG_NAME"
-      elif [[ -n "$BRANCH_NAME" ]]; then
-        run git -C "$INSTALL_DIR" checkout "$BRANCH_NAME"
-        run git -C "$INSTALL_DIR" pull --ff-only
-      else
-        run git -C "$INSTALL_DIR" pull --ff-only
-      fi
-    elif [[ -z "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]; then
-      local ref_args=()
-      if [[ -n "$TAG_NAME" ]]; then
-        ref_args=(--branch "$TAG_NAME")
-      elif [[ -n "$BRANCH_NAME" ]]; then
-        ref_args=(--branch "$BRANCH_NAME")
-      fi
-      run git clone --depth 1 "${ref_args[@]}" "$REPO_URL" "$INSTALL_DIR"
-    else
-      log "Install directory is not empty and is not a git checkout; refreshing files from a temporary clone."
-      local tmp_dir
-      tmp_dir="$(mktemp -d)"
-      local ref_args=()
-      if [[ -n "$TAG_NAME" ]]; then
-        ref_args=(--branch "$TAG_NAME")
-      elif [[ -n "$BRANCH_NAME" ]]; then
-        ref_args=(--branch "$BRANCH_NAME")
-      fi
-      run git clone --depth 1 "${ref_args[@]}" "$REPO_URL" "$tmp_dir"
-      run cp -a "$tmp_dir"/. "$INSTALL_DIR"/
-      run rm -rf "$tmp_dir"
-    fi
+  local local_source="${REPO_URL#file://}"
+  if [[ -d "$local_source" ]]; then
+    log "Using local source directory $local_source without copying Git metadata."
+    copy_local_source "$local_source"
   else
-    download_archive "$INSTALL_DIR"
+    download_archive
   fi
 }
 
@@ -1167,9 +1163,6 @@ install_app() {
   install_dependencies
   if [[ "$DO_UPDATE" -eq 1 ]]; then
     stop_service_if_needed
-  fi
-  if [[ "$REINSTALL_APP" -eq 1 ]]; then
-    clean_application_files_keep_data
   fi
   prepare_directories
   choose_ports

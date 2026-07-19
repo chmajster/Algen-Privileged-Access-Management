@@ -55,10 +55,12 @@ echo "[integration] fresh installation"
 bash "$INSTALLER" "${INSTALL_ARGS[@]}"
 
 [[ -f "$INSTALL_DIR/.algen-pam-install" ]]
+[[ ! -e "$INSTALL_DIR/.git" ]]
 [[ -x "$TEST_HOME/.local/bin/algen-pam" ]]
 [[ -f "$CONFIG_FILE" ]]
 [[ -f "$SERVICE_FILE" ]]
 [[ -f "$PID_FILE" ]]
+[[ ! -e "$INSTALL_DIR/.git" ]]
 grep -q '^ALGEN_PAM_HOST=0.0.0.0$' "$CONFIG_FILE"
 APP_PORT="$(sed -n 's/^ALGEN_PAM_PORT=//p' "$CONFIG_FILE" | tail -n 1)"
 curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null

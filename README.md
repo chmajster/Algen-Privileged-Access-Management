@@ -27,6 +27,8 @@ dziala rowniez wtedy, gdy skrypt jest przekazywany do Bash przez potok. Instalac
 bez pytan nadal jest dostepna przez `bash -s -- --silent --yes`.
 Domyslnie wykonywana jest instalacja systemowa w `/opt/algen-pam`; wariant lokalny
 dla biezacego uzytkownika wymaga opcji `--user`.
+Instalator nie korzysta z `git clone`: pobiera najnowsze archiwum `tar.gz` brancha
+`main`, weryfikuje je i dopiero wtedy instaluje lub aktualizuje pliki aplikacji.
 
 Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
 instalacji CLI:

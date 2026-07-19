@@ -33,10 +33,11 @@ Wymagane narzedzia systemowe:
 - `python3-venv` / modul `venv`,
 - `pip`,
 - `curl` albo `wget`,
-- `tar`,
-- `git` opcjonalnie, ale preferowany.
+- `tar`.
 
-Gdy `git` nie jest dostepny, instalator probuje pobrac archiwum `tar.gz` z GitHuba.
+Instalator nie wykonuje `git clone`, `git fetch` ani `git pull`. Przy kazdej
+instalacji i aktualizacji pobiera swieze archiwum `tar.gz` najnowszego stanu
+brancha `main` (albo brancha/taga wskazanego argumentem).
 
 ## Bezposrednia instalacja z sieci
 
@@ -443,10 +444,12 @@ Instalacja systemowa wymaga `sudo`. Uzyj instalacji uzytkownika:
 Instalator przerwie prace z komunikatem bledu pobierania. Sprawdz DNS, proxy,
 firewall albo uzyj `--repo` z lokalnym mirror URL.
 
-### Brak `git`
+### Pobieranie najnowszej wersji
 
-Instalator uzyje archiwum z GitHuba, jezeli ma `curl` albo `wget` oraz `tar`.
-Mozesz tez zainstalowac `git` i uruchomic instalator ponownie.
+Instalator zawsze pobiera archiwum z GitHuba i nie wymaga `git`. Archiwum jest
+najpierw pobierane, sprawdzane przez `tar` i rozpakowywane w katalogu tymczasowym.
+Dopiero po poprawnej weryfikacji instalator wymienia pliki aplikacji, zachowujac
+konfiguracje, dane i logi.
 
 ### Python starszy niz 3.12
 
