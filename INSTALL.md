@@ -191,7 +191,12 @@ Nastepnie otworz:
 
 ```text
 http://127.0.0.1:8080/
+http://ADRES_IP_SERWERA:8080/
 ```
+
+Instalator ustawia `ALGEN_PAM_HOST=0.0.0.0`, wiec aplikacja nasluchuje na
+wszystkich interfejsach sieciowych. Dostep z innych komputerow wymaga zezwolenia
+na wybrany port TCP w firewallu hosta i ewentualnym firewallu sieciowym.
 
 Domyslne konta demo:
 
@@ -243,6 +248,30 @@ Skrot `.desktop` otwiera interfejs webowy:
 ```
 
 Skrot zaklada, ze aplikacja slucha na `http://127.0.0.1:8080/`.
+
+## Wykrywanie istniejacej instalacji
+
+Przy zwyklym uruchomieniu `./install.sh` instalator wykrywa istniejaca instalacje
+uzytkownika albo systemowa i wyswietla menu:
+
+```text
+Choose action (automatic update starts after 5 seconds):
+  1) Update application (backup and keep config)
+  2) Reinstall application (clean app files; keep config, data, and logs)
+  3) Backup config only
+  4) Remove app (keep config, data, and logs)
+  5) Remove app and all files
+  6) Abort
+Action [1] (auto update in 5s):
+```
+
+Brak wyboru przez 5 sekund uruchamia opcje `1`. Aktualizacja wykonuje kopie
+konfiguracji w podkatalogu `backups` katalogu konfiguracji. Reinstalacja usuwa
+tylko pliki aplikacji i zachowuje konfiguracje, katalog `data` oraz logi. Opcja
+`4` usuwa program i integracje systemd/desktop, ale pozostawia te same dane.
+
+W trybie `--silent --yes` wykryta instalacja jest aktualizowana automatycznie bez
+oczekiwania na menu.
 
 ## Aktualizacja
 
@@ -329,7 +358,12 @@ Instalator po instalacji sprawdza:
 
 - czy wrapper startowy istnieje,
 - czy `algen-pam --version` odpowiada,
-- status systemd, jezeli utworzono usluge.
+- status systemd, jezeli utworzono usluge,
+- czy aplikacja odpowiada na endpointzie `/api/health`.
+
+Bez uslugi systemd instalator uruchamia aplikacje tymczasowo na potrzeby testu i
+zatrzymuje ja po poprawnej odpowiedzi. Z usluga systemd sprawdza dzialajacy proces
+uslugi. Brak poprawnej odpowiedzi konczy instalacje bledem i wskazuje logi.
 
 ## Argumenty
 

@@ -34,6 +34,13 @@ instalacji CLI:
 Instalator sprawdza, czy port HTTP `8080` i port bramy SSH `2222` sa wolne. Przy
 konflikcie proponuje inne porty (albo wybiera je automatycznie w trybie
 `--silent --yes`). Wlasne wartosci ustawisz przez `--port` i `--gateway-port`.
+Po instalacji uruchamia test `/api/health`. Aplikacja nasluchuje domyslnie na
+`0.0.0.0`, dlatego jest dostepna przez wszystkie adresy IP serwera, na przyklad
+`http://192.168.1.10:8080/` (o ile pozwala na to firewall).
+
+Ponowne uruchomienie instalatora wykrywa istniejaca instalacje i pokazuje menu
+aktualizacji, reinstalacji, kopii konfiguracji oraz usuwania. Bez wyboru po
+5 sekundach automatycznie rozpoczyna sie aktualizacja z kopia konfiguracji.
 
 Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
 

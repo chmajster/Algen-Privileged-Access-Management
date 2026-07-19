@@ -18,6 +18,8 @@ BRANCH_NAME=""
 TAG_NAME=""
 DO_UPDATE=0
 DO_UNINSTALL=0
+REINSTALL_APP=0
+INSTALL_ACTION=""
 DRY_RUN=0
 VERBOSE=0
 KEEP_CONFIG=0
@@ -26,6 +28,7 @@ PACKAGE_MANAGER=""
 LOG_FILE=""
 INSTALL_OWNER="${SUDO_USER:-${USER:-$(id -un)}}"
 SERVICE_WAS_ACTIVE=0
+TEMP_SERVER_PID=""
 ADMIN_USER="${PAM_DEFAULT_ADMIN_USER:-admin}"
 ADMIN_EMAIL="${PAM_DEFAULT_ADMIN_EMAIL:-admin@example.local}"
 ADMIN_PASSWORD="${PAM_DEFAULT_ADMIN_PASSWORD:-}"
@@ -34,6 +37,7 @@ ADMIN_PASSWORD_SUPPLIED=0
 ADMIN_BOOTSTRAP=1
 UPDATE_ADMIN_PASSWORD=0
 APP_PORT="${ALGEN_PAM_PORT:-8080}"
+APP_HOST="0.0.0.0"
 GATEWAY_PORT="${PAM_GATEWAY_PORT:-2222}"
 APP_PORT_EXPLICIT=0
 GATEWAY_PORT_EXPLICIT=0
@@ -48,6 +52,9 @@ abort() {
 }
 
 on_interrupt() {
+  if [[ -n "$TEMP_SERVER_PID" ]]; then
+    kill "$TEMP_SERVER_PID" 2>/dev/null || true
+  fi
   echo
   abort "Installation interrupted."
 }
@@ -538,6 +545,54 @@ ui_choose_scope() {
   fi
 }
 
+installation_present() {
+  [[ -f "$INSTALL_DIR/.algen-pam-install" ]] \
+    || { [[ -f "$CONFIG_FILE" ]] && [[ -e "$BIN_PATH" || -f "$SERVICE_FILE" ]]; }
+}
+
+detect_installed_scope() {
+  [[ -z "$INSTALL_SCOPE" && -z "$INSTALL_DIR" ]] || return 0
+  if [[ -f "$HOME/.local/share/algen-pam/.algen-pam-install" ]] \
+    || { [[ -f "$HOME/.config/algen-pam/.env" ]] && [[ -e "$HOME/.local/bin/algen-pam" ]]; }; then
+    INSTALL_SCOPE="user"
+  elif [[ -f "/opt/algen-pam/.algen-pam-install" ]] \
+    || { [[ -f "/etc/algen-pam/.env" ]] && [[ -e "/usr/local/bin/algen-pam" ]]; }; then
+    INSTALL_SCOPE="system"
+  fi
+}
+
+choose_existing_install_action() {
+  local action=""
+  printf '\nExisting %s installation detected in %s.\n\n' "$APP_TITLE" "$INSTALL_DIR"
+  cat <<'EOF'
+Choose action (automatic update starts after 5 seconds):
+  1) Update application (backup and keep config)
+  2) Reinstall application (clean app files; keep config, data, and logs)
+  3) Backup config only
+  4) Remove app (keep config, data, and logs)
+  5) Remove app and all files
+  6) Abort
+EOF
+  if ! read -r -t 5 -p "Action [1] (auto update in 5s): " action; then
+    printf '\n'
+    action="1"
+  fi
+  action="${action:-1}"
+  while [[ ! "$action" =~ ^[1-6]$ ]]; do
+    read -r -p "Choose an action from 1 to 6: " action
+  done
+
+  case "$action" in
+    1) INSTALL_ACTION="update"; DO_UPDATE=1 ;;
+    2) INSTALL_ACTION="reinstall"; DO_UPDATE=1; REINSTALL_APP=1 ;;
+    3) INSTALL_ACTION="backup" ;;
+    4) INSTALL_ACTION="remove_keep" ;;
+    5) INSTALL_ACTION="remove_all"; DO_UNINSTALL=1 ;;
+    6) abort "No changes were made." ;;
+  esac
+  ASSUME_YES=1
+}
+
 ui_flow() {
   if [[ ! -t 0 ]]; then
     [[ "$DRY_RUN" -eq 1 ]] && return 0
@@ -546,9 +601,16 @@ ui_flow() {
 
   ui_msg "Welcome" "This installer will install $APP_TITLE from $REPO_URL."
   check_system
-  INSTALL_SCOPE="$(ui_choose_scope)"
+  if [[ -z "$INSTALL_SCOPE" ]]; then
+    INSTALL_SCOPE="$(ui_choose_scope)"
+  fi
   resolve_paths
   INSTALL_DIR="$(ui_input "Install directory" "Choose installation directory" "$INSTALL_DIR")"
+  resolve_paths
+  if installation_present; then
+    choose_existing_install_action
+    return 0
+  fi
   ADMIN_USER="$(ui_input "Admin account" "Admin username" "$ADMIN_USER")"
   ADMIN_EMAIL="$(ui_input "Admin account" "Admin email" "$ADMIN_EMAIL")"
   ADMIN_PASSWORD="$(ui_password "Admin account" "Admin password. Leave empty to generate one.")"
@@ -736,6 +798,7 @@ configure_app() {
 
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_USER" "$ADMIN_USER"
   set_env_value "$CONFIG_FILE" "PAM_DEFAULT_ADMIN_EMAIL" "$ADMIN_EMAIL"
+  set_env_value "$CONFIG_FILE" "ALGEN_PAM_HOST" "$APP_HOST"
   set_env_value "$CONFIG_FILE" "ALGEN_PAM_PORT" "$APP_PORT"
   set_env_value "$CONFIG_FILE" "PAM_GATEWAY_PORT" "$GATEWAY_PORT"
   if [[ "$config_created" -eq 1 ]]; then
@@ -863,7 +926,7 @@ Type=simple
 $user_line
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$CONFIG_FILE
-ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT
+ExecStart=$INSTALL_DIR/backend/.venv/bin/uvicorn app.main:app --host $APP_HOST --port $APP_PORT
 Restart=on-failure
 RestartSec=5
 
@@ -896,14 +959,58 @@ EOF
 validate_installation() {
   log "Validating installation."
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] validate launcher, version, and service status"
+    echo "[dry-run] validate launcher, version, service status, and HTTP health endpoint"
     return 0
   fi
   [[ -x "$BIN_PATH" ]] || abort "Launcher was not created at $BIN_PATH."
   "$BIN_PATH" --version >/dev/null || log "Version check is not supported."
   if [[ "$CREATE_SERVICE" == "1" ]]; then
     systemctl_cmd status algen-pam.service --no-pager || true
+    wait_for_health || abort "Application service started but http://127.0.0.1:$APP_PORT/api/health did not respond. Check $LOG_FILE and the systemd journal."
+  else
+    validate_temporary_server
   fi
+}
+
+wait_for_health() {
+  local attempt
+  for attempt in {1..30}; do
+    if curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" >/dev/null 2>&1; then
+      log "Application health check passed on port $APP_PORT."
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+validate_temporary_server() {
+  local validation_log="$LOG_DIR/validation.log"
+  log "Starting a temporary application process for the health check."
+  ALGEN_PAM_HOST="127.0.0.1" ALGEN_PAM_PORT="$APP_PORT" "$BIN_PATH" >"$validation_log" 2>&1 &
+  TEMP_SERVER_PID=$!
+  if wait_for_health; then
+    kill "$TEMP_SERVER_PID" 2>/dev/null || true
+    wait "$TEMP_SERVER_PID" 2>/dev/null || true
+    TEMP_SERVER_PID=""
+    log "Temporary validation process stopped."
+    return 0
+  fi
+  kill "$TEMP_SERVER_PID" 2>/dev/null || true
+  wait "$TEMP_SERVER_PID" 2>/dev/null || true
+  TEMP_SERVER_PID=""
+  abort "Application did not pass its health check. See $validation_log."
+}
+
+primary_ip_address() {
+  local address=""
+  if command -v hostname >/dev/null 2>&1; then
+    address="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -z "$address" ]] && command -v ip >/dev/null 2>&1; then
+    address="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')"
+  fi
+  printf '%s\n' "$address"
 }
 
 safe_remove_dir() {
@@ -925,9 +1032,38 @@ safe_remove_dir() {
   fi
 }
 
-uninstall_app() {
-  prepare_logging
-  log "Uninstalling $APP_TITLE."
+backup_config() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    log "No configuration file found at $CONFIG_FILE; backup skipped."
+    return 0
+  fi
+  local backup_dir="$CONFIG_DIR/backups"
+  local backup_file="$backup_dir/.env.$(date '+%Y%m%d-%H%M%S').bak"
+  run_privileged mkdir -p "$backup_dir"
+  run_privileged cp -p "$CONFIG_FILE" "$backup_file"
+  log "Configuration backup created at $backup_file."
+}
+
+validate_cleanup_target() {
+  [[ "$INSTALL_DIR" == /* && "$INSTALL_DIR" != "/" && "$INSTALL_DIR" != "$HOME" ]] \
+    || abort "Refusing to clean unsafe installation directory: $INSTALL_DIR"
+  [[ -f "$INSTALL_DIR/.algen-pam-install" \
+    || "$INSTALL_DIR" == "/opt/algen-pam" \
+    || "$INSTALL_DIR" == "$HOME/.local/share/algen-pam" ]] \
+    || abort "Refusing to clean $INSTALL_DIR because it does not look like an Algen-PAM installation."
+}
+
+clean_application_files_keep_data() {
+  validate_cleanup_target
+  log "Removing application files while preserving $DATA_DIR."
+  local entry
+  while IFS= read -r -d '' entry; do
+    run_privileged rm -rf "$entry"
+  done < <(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name "data" ! -name ".algen-pam-install" -print0)
+}
+
+remove_service_integration() {
   stop_service_if_needed
   if service_exists; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -941,6 +1077,21 @@ uninstall_app() {
   fi
   run_privileged rm -f "$BIN_PATH"
   run_privileged rm -f "$DESKTOP_FILE"
+}
+
+remove_application_keep_state() {
+  prepare_logging
+  log "Removing $APP_TITLE while keeping configuration, data, and logs."
+  remove_service_integration
+  clean_application_files_keep_data
+  run_privileged rm -f "$INSTALL_DIR/.algen-pam-install"
+  log "Application removed. Preserved: $CONFIG_DIR, $DATA_DIR, and $LOG_DIR."
+}
+
+uninstall_app() {
+  prepare_logging
+  log "Uninstalling $APP_TITLE."
+  remove_service_integration
   safe_remove_dir "$INSTALL_DIR"
   if [[ "$KEEP_CONFIG" -eq 0 ]]; then
     safe_remove_dir "$CONFIG_DIR"
@@ -953,12 +1104,18 @@ uninstall_app() {
 
 install_app() {
   prepare_logging
+  if [[ "$INSTALL_ACTION" == "update" ]]; then
+    backup_config
+  fi
   check_system
   install_dependencies
-  prepare_directories
   if [[ "$DO_UPDATE" -eq 1 ]]; then
     stop_service_if_needed
   fi
+  if [[ "$REINSTALL_APP" -eq 1 ]]; then
+    clean_application_files_keep_data
+  fi
+  prepare_directories
   choose_ports
   fetch_source
   configure_app
@@ -976,6 +1133,8 @@ install_app() {
 }
 
 print_final_info() {
+  local network_ip
+  network_ip="$(primary_ip_address)"
   cat <<EOF
 
 $APP_TITLE is ready.
@@ -985,6 +1144,9 @@ Run:
 
 Open:
   http://127.0.0.1:$APP_PORT/
+
+Network access (listening on all interfaces):
+  http://${network_ip:-SERVER_IP}:$APP_PORT/
 
 SSH gateway port:
   $GATEWAY_PORT
@@ -1028,14 +1190,21 @@ EOF
 
 main() {
   parse_args "$@"
+  detect_installed_scope
   if [[ "$SILENT" -eq 0 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]]; then
     ui_flow
   fi
   resolve_paths
-  if [[ "$DO_UNINSTALL" -eq 0 ]]; then
-    load_configured_ports
+
+  if [[ "$SILENT" -eq 1 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]] \
+    && installation_present; then
+    echo "Existing installation detected in $INSTALL_DIR; selecting automatic update."
+    INSTALL_ACTION="update"
+    DO_UPDATE=1
   fi
-  ensure_admin_settings
+  if [[ "$DO_UPDATE" -eq 1 && -z "$INSTALL_ACTION" ]]; then
+    INSTALL_ACTION="update"
+  fi
 
   if [[ "$CREATE_SERVICE" == "" ]]; then
     CREATE_SERVICE=0
@@ -1043,6 +1212,22 @@ main() {
   if [[ "$CREATE_DESKTOP" == "" ]]; then
     CREATE_DESKTOP=0
   fi
+
+  if [[ "$INSTALL_ACTION" == "backup" ]]; then
+    prepare_logging
+    backup_config
+    log "Configuration-only backup complete."
+    return 0
+  fi
+  if [[ "$INSTALL_ACTION" == "remove_keep" ]]; then
+    remove_application_keep_state
+    return 0
+  fi
+
+  if [[ "$DO_UNINSTALL" -eq 0 ]]; then
+    load_configured_ports
+  fi
+  ensure_admin_settings
 
   if [[ "$DO_UNINSTALL" -eq 1 ]]; then
     confirm "Remove $APP_TITLE from $INSTALL_DIR?" || abort "Uninstall cancelled."
