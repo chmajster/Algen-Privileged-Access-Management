@@ -19,8 +19,12 @@ Bezposrednia instalacja z repozytorium
 [chmajster/Algen-Privileged-Access-Management](https://github.com/chmajster/Algen-Privileged-Access-Management):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
+curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash
 ```
+
+Instalator automatycznie korzysta z `/dev/tty`, dlatego kreator interaktywny
+dziala rowniez wtedy, gdy skrypt jest przekazywany do Bash przez potok. Instalacja
+bez pytan nadal jest dostepna przez `bash -s -- --silent --yes`.
 
 Po sklonowaniu repozytorium mozesz tez uzyc instalatora z trybem UI albo cichej
 instalacji CLI:

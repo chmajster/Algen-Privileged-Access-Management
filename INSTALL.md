@@ -44,6 +44,16 @@ Instalator mozna uruchomic bez klonowania repozytorium
 [chmajster/Algen-Privileged-Access-Management](https://github.com/chmajster/Algen-Privileged-Access-Management):
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash
+```
+
+Mimo ze standardowe wejscie Bash jest zajete przez potok, instalator automatycznie
+podlacza pytania do terminala `/dev/tty`. Dzieki temu powyzsze polecenie uruchamia
+pelny kreator interaktywny oraz menu wykrytej instalacji.
+
+Wariant bez pytan:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/chmajster/Algen-Privileged-Access-Management/main/install.sh | bash -s -- --silent --yes
 ```
 

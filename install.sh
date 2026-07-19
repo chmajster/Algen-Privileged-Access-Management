@@ -60,6 +60,14 @@ on_interrupt() {
 }
 trap on_interrupt INT TERM
 
+attach_controlling_terminal() {
+  [[ -t 0 ]] && return 0
+  [[ -c /dev/tty ]] || return 0
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    exec 0<&3
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Linux PAM Lite installer
@@ -1189,6 +1197,7 @@ EOF
 }
 
 main() {
+  attach_controlling_terminal
   parse_args "$@"
   detect_installed_scope
   if [[ "$SILENT" -eq 0 && "$DO_UNINSTALL" -eq 0 && "$DO_UPDATE" -eq 0 ]]; then
