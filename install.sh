@@ -359,6 +359,25 @@ run_privileged() {
   fi
 }
 
+run_system_package_command() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+      echo "[dry-run] $*"
+    else
+      echo "[dry-run] sudo $*"
+    fi
+    return 0
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    [[ "$VERBOSE" -eq 1 ]] && echo "+ $*"
+    "$@"
+  else
+    command -v sudo >/dev/null 2>&1 || abort "Installing system dependencies requires sudo."
+    [[ "$VERBOSE" -eq 1 ]] && echo "+ sudo $*"
+    sudo "$@"
+  fi
+}
+
 log() {
   local line
   line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -451,7 +470,9 @@ install_dependencies() {
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || missing+=("curl")
   command -v tar >/dev/null 2>&1 || missing+=("tar")
 
-  if [[ "${#missing[@]}" -eq 0 ]] && python3 -m venv --help >/dev/null 2>&1; then
+  if [[ "${#missing[@]}" -eq 0 ]] \
+    && python3 -m venv --help >/dev/null 2>&1 \
+    && python3 -c 'import ensurepip' >/dev/null 2>&1; then
     log "System dependencies look ready."
     return 0
   fi
@@ -465,11 +486,11 @@ install_dependencies() {
   if confirm "Install missing system dependencies using $PACKAGE_MANAGER?"; then
     case "$PACKAGE_MANAGER" in
       apt)
-        run_privileged apt-get update
-        run_privileged apt-get install -y $packages
+        run_system_package_command apt-get update
+        run_system_package_command apt-get install -y $packages
         ;;
-      dnf) run_privileged dnf install -y $packages ;;
-      pacman) run_privileged pacman -Sy --needed --noconfirm $packages ;;
+      dnf) run_system_package_command dnf install -y $packages ;;
+      pacman) run_system_package_command pacman -Sy --needed --noconfirm $packages ;;
     esac
   else
     abort "Install dependencies manually and rerun: $manual_cmd"
