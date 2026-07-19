@@ -579,6 +579,19 @@ pytest
 
 The test suite covers login, role access control, request creation, approvals, automatic grants, self-approval blocking, scheduler expiry, audit logging, Linux username validation, mock executor behavior, session creation, command import, CSV export, and history deletion protection.
 
+Testy instalatora na Linuxie:
+
+```bash
+bash tests/install_smoke.sh
+bash tests/install_integration.sh
+```
+
+Test integracyjny wykonuje pelna instalacje w odizolowanym katalogu, uruchamia
+wygenerowana usluge, sprawdza `/api/health`, wykonuje automatyczny update i
+potwierdza restart procesu oraz zachowanie konfiguracji i danych. Na koncu
+sprawdza zatrzymanie uslugi podczas deinstalacji. Workflow GitHub Actions
+uruchamia oba testy na Ubuntu z Pythonem 3.12.
+
 ## Development Roadmap
 
 - PostgreSQL migrations with Alembic.

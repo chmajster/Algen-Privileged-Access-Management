@@ -44,7 +44,7 @@ INSTALL_ARGS=(
 )
 
 echo "[integration] fresh installation"
-"$INSTALLER" "${INSTALL_ARGS[@]}"
+bash "$INSTALLER" "${INSTALL_ARGS[@]}"
 
 [[ -f "$INSTALL_DIR/.algen-pam-install" ]]
 [[ -x "$TEST_HOME/.local/bin/algen-pam" ]]
@@ -53,7 +53,7 @@ echo "[integration] fresh installation"
 [[ -f "$PID_FILE" ]]
 grep -q '^ALGEN_PAM_HOST=0.0.0.0$' "$CONFIG_FILE"
 APP_PORT="$(sed -n 's/^ALGEN_PAM_PORT=//p' "$CONFIG_FILE" | tail -n 1)"
-curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -q '"message":"ok"'
+curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 systemctl --user is-active --quiet algen-pam.service
 FIRST_PID="$(cat "$PID_FILE")"
 kill -0 "$FIRST_PID"
@@ -62,17 +62,17 @@ printf '# integration-config-sentinel\n' >>"$CONFIG_FILE"
 printf 'integration-data-sentinel\n' >"$INSTALL_DIR/data/integration-sentinel"
 
 echo "[integration] automatic update of detected installation"
-"$INSTALLER" "${INSTALL_ARGS[@]}"
+bash "$INSTALLER" "${INSTALL_ARGS[@]}"
 
 [[ -f "$PID_FILE" ]]
 SECOND_PID="$(cat "$PID_FILE")"
 [[ "$SECOND_PID" != "$FIRST_PID" ]]
 kill -0 "$SECOND_PID"
 systemctl --user is-active --quiet algen-pam.service
-curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -q '"message":"ok"'
+curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 grep -q '^# integration-config-sentinel$' "$CONFIG_FILE"
 grep -q '^integration-data-sentinel$' "$INSTALL_DIR/data/integration-sentinel"
-find "$TEST_HOME/.config/algen-pam/backups" -type f -name '.env.*.bak' -print -quit | grep -q .
+find "$TEST_HOME/.config/algen-pam/backups" -type f -name '.env.*.bak' -print -quit | grep . >/dev/null
 grep -q "ExecStart=.*--host 0.0.0.0 --port $APP_PORT" "$SERVICE_FILE"
 
 if command -v systemd-analyze >/dev/null 2>&1; then
@@ -80,7 +80,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
 fi
 
 echo "[integration] uninstall and service shutdown"
-"$INSTALLER" --uninstall --user --yes --install-dir "$INSTALL_DIR"
+bash "$INSTALLER" --uninstall --user --yes --install-dir "$INSTALL_DIR"
 [[ ! -e "$INSTALL_DIR" ]]
 [[ ! -e "$SERVICE_FILE" ]]
 [[ ! -e "$PID_FILE" ]]

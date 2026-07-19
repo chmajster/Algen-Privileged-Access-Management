@@ -379,6 +379,17 @@ Bez uslugi systemd instalator uruchamia aplikacje tymczasowo na potrzeby testu i
 zatrzymuje ja po poprawnej odpowiedzi. Z usluga systemd sprawdza dzialajacy proces
 uslugi. Brak poprawnej odpowiedzi konczy instalacje bledem i wskazuje logi.
 
+Pelny test cyklu instalacji i aktualizacji na Linuxie:
+
+```bash
+bash tests/install_integration.sh
+```
+
+Test korzysta z katalogu tymczasowego i izolowanej implementacji `systemctl`.
+Sprawdza swieza instalacje, aktywny proces uslugi, odpowiedz `/api/health`, restart
+po automatycznym update, kopie konfiguracji, zachowanie danych, poprawnosc unit
+file oraz zatrzymanie i usuniecie uslugi podczas deinstalacji.
+
 ## Argumenty
 
 ```text
