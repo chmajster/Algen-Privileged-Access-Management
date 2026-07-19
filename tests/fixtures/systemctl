@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${MOCK_SYSTEMD_STATE_DIR:?MOCK_SYSTEMD_STATE_DIR is required}"
+: "${MOCK_SYSTEMD_SERVICE_FILE:?MOCK_SYSTEMD_SERVICE_FILE is required}"
+
+mkdir -p "$MOCK_SYSTEMD_STATE_DIR"
+PID_FILE="$MOCK_SYSTEMD_STATE_DIR/algen-pam.pid"
+SERVICE_LOG="$MOCK_SYSTEMD_STATE_DIR/algen-pam.service.log"
+
+[[ "${1:-}" == "--user" ]] && shift
+ACTION="${1:-}"
+[[ $# -eq 0 ]] || shift
+
+service_running() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE")"
+  kill -0 "$pid" 2>/dev/null
+}
+
+stop_service() {
+  if service_running; then
+    local pid
+    pid="$(cat "$PID_FILE")"
+    kill "$pid" 2>/dev/null || true
+    for _ in {1..50}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+}
+
+start_service() {
+  stop_service
+  [[ -f "$MOCK_SYSTEMD_SERVICE_FILE" ]] || exit 4
+  local working_directory exec_start
+  working_directory="$(sed -n 's/^WorkingDirectory=//p' "$MOCK_SYSTEMD_SERVICE_FILE" | tail -n 1)"
+  exec_start="$(sed -n 's/^ExecStart=//p' "$MOCK_SYSTEMD_SERVICE_FILE" | tail -n 1)"
+  [[ -n "$working_directory" && -n "$exec_start" ]] || exit 4
+  (
+    cd "$working_directory"
+    nohup bash -c "exec $exec_start" >>"$SERVICE_LOG" 2>&1 &
+    echo "$!" >"$PID_FILE"
+  )
+}
+
+case "$ACTION" in
+  is-active)
+    service_running
+    ;;
+  status)
+    if service_running; then
+      echo "algen-pam.service - active (running), pid $(cat "$PID_FILE")"
+    else
+      echo "algen-pam.service - inactive"
+      exit 3
+    fi
+    ;;
+  daemon-reload)
+    ;;
+  enable)
+    if [[ " $* " == *" --now "* ]]; then
+      start_service
+    fi
+    ;;
+  start|restart)
+    start_service
+    ;;
+  stop|disable)
+    stop_service
+    ;;
+  *)
+    echo "Unsupported mock systemctl action: $ACTION $*" >&2
+    exit 2
+    ;;
+esac
