@@ -47,6 +47,8 @@ Po instalacji uruchamia test `/api/health`. Aplikacja nasluchuje domyslnie na
 Ponowne uruchomienie instalatora wykrywa istniejaca instalacje i pokazuje menu
 aktualizacji, reinstalacji, kopii konfiguracji oraz usuwania. Bez wyboru po
 5 sekundach automatycznie rozpoczyna sie aktualizacja z kopia konfiguracji.
+Po aktualizacji istniejaca usluga systemd jest ponownie wlaczana i uruchamiana;
+instalator sprawdza jej stan `enabled`, `active` oraz endpoint `/api/health`.
 
 Pelna dokumentacja instalacji, aktualizacji i deinstalacji znajduje sie w [INSTALL.md](INSTALL.md).
 

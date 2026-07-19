@@ -42,6 +42,14 @@ INSTALL_ARGS=(
   --admin-email integration@example.local
   --admin-password integration-pass
 )
+UPDATE_ARGS=(
+  --silent --yes --user
+  --install-dir "$INSTALL_DIR"
+  --repo "$ROOT_DIR"
+  --admin-user integration-admin
+  --admin-email integration@example.local
+  --admin-password integration-pass
+)
 
 echo "[integration] fresh installation"
 bash "$INSTALLER" "${INSTALL_ARGS[@]}"
@@ -55,6 +63,7 @@ grep -q '^ALGEN_PAM_HOST=0.0.0.0$' "$CONFIG_FILE"
 APP_PORT="$(sed -n 's/^ALGEN_PAM_PORT=//p' "$CONFIG_FILE" | tail -n 1)"
 curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 systemctl --user is-active --quiet algen-pam.service
+systemctl --user is-enabled --quiet algen-pam.service
 FIRST_PID="$(cat "$PID_FILE")"
 kill -0 "$FIRST_PID"
 
@@ -62,13 +71,14 @@ printf '# integration-config-sentinel\n' >>"$CONFIG_FILE"
 printf 'integration-data-sentinel\n' >"$INSTALL_DIR/data/integration-sentinel"
 
 echo "[integration] automatic update of detected installation"
-bash "$INSTALLER" "${INSTALL_ARGS[@]}"
+bash "$INSTALLER" "${UPDATE_ARGS[@]}"
 
 [[ -f "$PID_FILE" ]]
 SECOND_PID="$(cat "$PID_FILE")"
 [[ "$SECOND_PID" != "$FIRST_PID" ]]
 kill -0 "$SECOND_PID"
 systemctl --user is-active --quiet algen-pam.service
+systemctl --user is-enabled --quiet algen-pam.service
 curl -fsS "http://127.0.0.1:$APP_PORT/api/health" | grep -F '"message":"ok"' >/dev/null
 grep -q '^# integration-config-sentinel$' "$CONFIG_FILE"
 grep -q '^integration-data-sentinel$' "$INSTALL_DIR/data/integration-sentinel"

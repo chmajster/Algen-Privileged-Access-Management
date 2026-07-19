@@ -304,6 +304,13 @@ Dla instalacji systemowej:
 Jezeli usluga byla aktywna, instalator zatrzymuje ja przed aktualizacja i probuje
 uruchomic ponownie po zakonczeniu.
 
+Istniejacy plik uslugi jest automatycznie wykrywany i zachowywany podczas
+aktualizacji, nawet gdy ponowne uruchomienie instalatora nie zawiera opcji
+`--service`. Po update instalator wymaga, aby `algen-pam.service` byla wlaczona
+(`is-enabled`), aktywna (`is-active`) i odpowiadala na `/api/health`. Niespelnienie
+ktoregokolwiek warunku konczy aktualizacje bledem i wskazuje log instalatora oraz
+journal systemd.
+
 Aktualizacja nie zmienia hasla admina, o ile nie podasz jawnie nowego hasla:
 
 ```bash

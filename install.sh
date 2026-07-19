@@ -936,8 +936,10 @@ service_is_enabled() {
 }
 
 service_should_be_running() {
-  [[ "$CREATE_SERVICE" == "1" ]] \
-    || [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 ]] && service_exists
+  if [[ "$CREATE_SERVICE" == "1" ]]; then
+    return 0
+  fi
+  [[ "$DO_UPDATE" -eq 1 && "$SERVICE_WAS_ACTIVE" -eq 1 ]] && service_exists
 }
 
 stop_service_if_needed() {
