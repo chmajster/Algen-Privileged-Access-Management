@@ -6,6 +6,7 @@ set -euo pipefail
 
 mkdir -p "$MOCK_SYSTEMD_STATE_DIR"
 PID_FILE="$MOCK_SYSTEMD_STATE_DIR/algen-pam.pid"
+ENABLED_FILE="$MOCK_SYSTEMD_STATE_DIR/algen-pam.enabled"
 SERVICE_LOG="$MOCK_SYSTEMD_STATE_DIR/algen-pam.service.log"
 
 [[ "${1:-}" == "--user" ]] && shift
@@ -51,6 +52,9 @@ case "$ACTION" in
   is-active)
     service_running
     ;;
+  is-enabled)
+    [[ -f "$ENABLED_FILE" ]]
+    ;;
   status)
     if service_running; then
       echo "algen-pam.service - active (running), pid $(cat "$PID_FILE")"
@@ -62,6 +66,7 @@ case "$ACTION" in
   daemon-reload)
     ;;
   enable)
+    touch "$ENABLED_FILE"
     if [[ " $* " == *" --now "* ]]; then
       start_service
     fi
@@ -69,8 +74,12 @@ case "$ACTION" in
   start|restart)
     start_service
     ;;
-  stop|disable)
+  stop)
     stop_service
+    ;;
+  disable)
+    stop_service
+    rm -f "$ENABLED_FILE"
     ;;
   *)
     echo "Unsupported mock systemctl action: $ACTION $*" >&2
