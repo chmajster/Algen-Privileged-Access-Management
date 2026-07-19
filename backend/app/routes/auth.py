@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from datetime import timezone
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ from app.security import create_access_token
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/login", response_model=schemas.Token)
@@ -25,7 +28,8 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
     user_agent = request.headers.get("user-agent")
     try:
         user, _ = authenticate_with_provider(db, provider, payload.username, payload.password)
-    except LocalAuthenticationBackendError:
+    except LocalAuthenticationBackendError as exc:
+        logger.exception("Linux PAM login backend failed for provider=%s: %s", provider, exc)
         db.rollback()
         write_auth_event(db, "login_backend_error", provider=provider, success=False, source_ip=ip, user_agent=user_agent, message="Linux PAM authentication backend unavailable")
         db.commit()

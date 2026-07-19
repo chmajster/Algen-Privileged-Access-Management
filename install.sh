@@ -434,9 +434,9 @@ detect_package_manager() {
 
 package_list() {
   case "$PACKAGE_MANAGER" in
-    apt) echo "python3 python3-venv python3-pip curl ca-certificates tar" ;;
-    dnf) echo "python3 python3-pip curl ca-certificates tar" ;;
-    pacman) echo "python python-pip curl ca-certificates tar" ;;
+    apt) echo "python3 python3-venv python3-pip curl ca-certificates tar libpam0g" ;;
+    dnf) echo "python3 python3-pip curl ca-certificates tar pam" ;;
+    pacman) echo "python python-pip curl ca-certificates tar pam" ;;
     *) echo "" ;;
   esac
 }
@@ -476,7 +476,8 @@ install_dependencies() {
 
   if [[ "${#missing[@]}" -eq 0 ]] \
     && python3 -m venv --help >/dev/null 2>&1 \
-    && python3 -c 'import ensurepip' >/dev/null 2>&1; then
+    && python3 -c 'import ensurepip' >/dev/null 2>&1 \
+    && python3 -c 'from ctypes.util import find_library; raise SystemExit(0 if find_library("pam") else 1)' >/dev/null 2>&1; then
     log "System dependencies look ready."
     return 0
   fi

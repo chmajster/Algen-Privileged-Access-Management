@@ -16,21 +16,28 @@ class LocalAuthenticationBackendError(RuntimeError):
     """The operating-system authentication backend could not be used."""
 
 
+def validate_os_auth_backend() -> None:
+    if pwd is None:
+        raise LocalAuthenticationBackendError("the pwd module is unavailable")
+    try:
+        import pam
+        pam.pam()
+    except (ImportError, OSError, AttributeError) as exc:
+        raise LocalAuthenticationBackendError(f"PAM initialization failed: {type(exc).__name__}: {exc}") from exc
+
+
 def _admin_usernames() -> set[str]:
     return {item.strip() for item in settings.pam_os_admin_users.split(",") if item.strip()}
 
 
 def authenticate_os_account(username: str, password: str) -> bool:
+    validate_os_auth_backend()
     try:
         import pam
-    except (ImportError, OSError) as exc:
-        raise LocalAuthenticationBackendError("Linux PAM library is unavailable") from exc
-
-    try:
         authenticator = pam.pam()
         return bool(authenticator.authenticate(username, password, service=settings.pam_os_pam_service))
     except Exception as exc:
-        raise LocalAuthenticationBackendError("Linux PAM authentication failed to initialize") from exc
+        raise LocalAuthenticationBackendError(f"PAM authentication call failed: {type(exc).__name__}: {exc}") from exc
 
 
 def _os_account(username: str):
