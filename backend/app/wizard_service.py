@@ -187,8 +187,11 @@ async def test_web_connection(db: DBSession, resource: dict[str, Any], connectio
     checks: list[CheckResult] = []; context = None
     try:
         url, domain = normalize_url(connection.get("start_url", connection.get("initial_url", ""))); allowed = connection.get("allowed_domains") or [domain]
+        if isinstance(allowed, str): allowed = [x.strip() for x in allowed.split(",")]
+        blocked = connection.get("blocked_domains", [])
+        if isinstance(blocked, str): blocked = [x.strip() for x in blocked.split(",")]
         checks.append(CheckResult(name="url_validation", status="success", message=f"URL znormalizowany: {url}"))
-        guard = NavigationGuard(allowed, bool(connection.get("allow_private_network", False)), connection.get("blocked_domains", []), bool(connection.get("allow_subdomains", True))); _, addresses = await guard.validate(url)
+        guard = NavigationGuard(allowed, bool(connection.get("allow_private_network", False)), blocked, bool(connection.get("allow_subdomains", True))); _, addresses = await guard.validate(url)
         checks += [CheckResult(name="dns_resolution", status="success", message=f"DNS: {len(addresses)} bezpieczny adres"), CheckResult(name="ssrf_policy", status="success", message="Cel przeszedł politykę SSRF")]
         context = await _guarded_web_context(url, allowed, connection.get("blocked_domains", []), bool(connection.get("allow_private_network", False)), bool(connection.get("allow_subdomains", True)))
         page = await context.new_page(); response = await page.goto(url, wait_until="domcontentloaded", timeout=int(connection.get("login_timeout_seconds", 30)) * 1000)
@@ -215,7 +218,11 @@ async def test_web_connection(db: DBSession, resource: dict[str, Any], connectio
 async def discover_web_login(payload: dict[str, Any]) -> dict[str, Any]:
     url, domain = normalize_url(payload["start_url"]); context = None
     try:
-        context = await _guarded_web_context(url, payload.get("allowed_domains") or [domain], payload.get("blocked_domains", []), payload.get("allow_private_network", False), payload.get("allow_subdomains", True))
+        allowed = payload.get("allowed_domains") or [domain]
+        if isinstance(allowed, str): allowed = [x.strip() for x in allowed.split(",")]
+        blocked = payload.get("blocked_domains", [])
+        if isinstance(blocked, str): blocked = [x.strip() for x in blocked.split(",")]
+        context = await _guarded_web_context(url, allowed, blocked, payload.get("allow_private_network", False), payload.get("allow_subdomains", True))
         page = await context.new_page(); await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
         candidates = await page.evaluate("""() => { const esc=v=>CSS.escape(v); const stable=e=>{if(e.id)return '#'+esc(e.id);if(e.name)return e.tagName.toLowerCase()+'[name="'+CSS.escape(e.name)+'"]';for(const a of [...e.attributes].filter(a=>a.name.startsWith('data-')).map(a=>a.name))if(e.getAttribute(a))return '['+a+'="'+CSS.escape(e.getAttribute(a))+'"]';const role=e.getAttribute('role'),label=e.getAttribute('aria-label');if(role&&label)return '[role="'+esc(role)+'"][aria-label="'+esc(label)+'"]';const form=e.closest('form');if(form&&(form.id||form.name)){const parent=form.id?'#'+esc(form.id):'form[name="'+esc(form.name)+'"]';return parent+' '+e.tagName.toLowerCase()+(e.type?'[type="'+esc(e.type)+'"]':'');}const cls=[...e.classList].filter(x=>!/[0-9]{3,}/.test(x)).slice(0,2);return e.tagName.toLowerCase()+(cls.length?'.'+cls.map(esc).join('.'):'');};return [...document.querySelectorAll('input,button,[role="button"],a,main,nav,[aria-label]')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0}).map((e,index)=>{const r=e.getBoundingClientRect();return {index,selector:stable(e),tag:e.tagName.toLowerCase(),type:e.type||'',name:e.name||'',role:e.getAttribute('role')||'',accessible_name:e.getAttribute('aria-label')||e.innerText?.trim().slice(0,120)||'',suggested:e.type==='password'?'password':e.tagName==='BUTTON'||e.type==='submit'?'submit':e.autocomplete==='username'||/user|email|login/i.test(e.name||e.id)?'username':'success',rect:{x:r.x,y:r.y,width:r.width,height:r.height}}})} """)
         screenshot = base64.b64encode(await page.screenshot(type="jpeg", quality=75, full_page=False)).decode()

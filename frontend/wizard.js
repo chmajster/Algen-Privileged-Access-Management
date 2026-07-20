@@ -54,7 +54,7 @@
     },
 
     setSaveStatus(text) { const node = this.root?.querySelector("#wizardSave"); if (node) node.textContent = text; },
-    showError(message, errors = []) { const node = this.root?.querySelector("#wizardErrors"); if (!node) return; node.innerHTML = `<div class="alert alert-danger"><strong>${esc(message)}</strong>${errors.length ? `<ul>${errors.map((e)=>`<li>${esc(e.message)}</li>`).join("")}</ul>` : ""}</div>`; node.scrollIntoView({behavior:"smooth",block:"nearest"}); },
+    showError(message, errors = [], technicalDetail = null) { const node = this.root?.querySelector("#wizardErrors"); if (!node) return; node.innerHTML = `<div class="alert alert-danger"><strong>${esc(message)}</strong>${errors.length ? `<ul>${errors.map((e)=>`<li>${esc(e.message)}</li>`).join("")}</ul>` : ""}${technicalDetail ? `<hr><pre class="small mb-0" style="white-space:pre-wrap; max-height:200px; overflow-y:auto;">${esc(technicalDetail)}</pre>` : ""}</div>`; node.scrollIntoView({behavior:"smooth",block:"nearest"}); },
 
     header() {
       const progress = this.steps.map((name, index) => `<button type="button" class="wizard-step ${index+1===this.step?"active":""} ${index+1<this.step?"done":""}" data-jump="${index+1}" ${index+1>this.step?"disabled":""}><span>${index+1}</span><small>${esc(name)}</small></button>`).join("");
@@ -134,11 +134,8 @@
       return `<div class="span-2">
             <h6>Kto będzie miał dostęp?</h6>
             <div class="text-muted small mb-3">Wyszukaj i wybierz użytkowników lub grupy, którzy od razu otrzymają dostęp.</div>
-            <input type="text" class="form-control mb-3" placeholder="Wpisz nazwę..." list="wizard-users-list" data-wizard-search="user">
-            <datalist id="wizard-users-list">
-              ${(this.pam.state().data.users||[]).map(u=>`<option value="${u.id}">${u.username} ${u.first_name?`(${u.first_name} ${u.last_name})`:""}</option>`).join("")}
-              ${(this.pam.state().data.groups||[]).map(g=>`<option value="g${g.id}">${g.name} (Grupa)</option>`).join("")}
-            </datalist>
+            <input type="text" class="form-control mb-3" placeholder="Wpisz nazwę..." list="wizard-users-list" data-wizard-search="user" id="wizardUserSearchInput" autocomplete="off">
+            <datalist id="wizard-users-list"></datalist>
             <div class="d-flex flex-wrap gap-2">
               ${(this.data.assignments||[]).map(a=>{
                 let name = a.subject_identifier;
@@ -193,16 +190,34 @@
       this.root.querySelectorAll("[data-secret-name]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretName;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:el.value,secret_type:k.includes("key")?"ssh_private_key":"password",value:this.secretInputs[k]?.value||""}});
       this.root.querySelectorAll("[data-secret-value]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretValue;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:this.secretInputs[k]?.name||k,secret_type:k.includes("key")?"ssh_private_key":"password",value:el.value}});
       this.root.querySelectorAll("[data-assignment-user]").forEach(el=>el.onchange=()=>{const id=String(el.dataset.assignmentUser);this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type==="user"&&String(a.subject_identifier)===id));if(el.checked)this.data.assignments.push({subject_type:"user",subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});this.scheduleSave()});
-      this.root.querySelectorAll("[data-wizard-search]").forEach(el=>el.onchange=(e)=>{
-        const val = e.target.value;
-        if(!val)return;
-        let type = "user", id = val;
-        if(val.startsWith("g")){ type="group"; id=val.slice(1); }
-        this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
-        this.data.assignments.push({subject_type:type,subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});
-        e.target.value = "";
-        this.scheduleSave();
-        this.render();
+      this.root.querySelectorAll("[data-wizard-search]").forEach(el=>{
+        el.oninput = (e) => {
+          const val = e.target.value.toLowerCase();
+          const datalist = this.root.querySelector("#wizard-users-list");
+          if(val.length >= 4) {
+             const users = (this.pam.state().data.users||[]).filter(u => String(u.id)===val || u.username.toLowerCase().includes(val) || (u.first_name && u.first_name.toLowerCase().includes(val)) || (u.last_name && u.last_name.toLowerCase().includes(val)));
+             const groups = (this.pam.state().data.groups||[]).filter(g => ('g'+g.id)===val || g.name.toLowerCase().includes(val));
+             datalist.innerHTML = users.map(u=>`<option value="${u.id}">${u.username} ${u.first_name?`(${u.first_name} ${u.last_name})`:""}</option>`).join("") + groups.map(g=>`<option value="g${g.id}">${g.name} (Grupa)</option>`).join("");
+          } else {
+             datalist.innerHTML = "";
+          }
+        };
+        el.onchange = (e) => {
+          const val = e.target.value;
+          if(!val)return;
+          let type = "user", id = val;
+          if(val.startsWith("g")){ type="group"; id=val.slice(1); }
+          
+          const existsUser = type === "user" && (this.pam.state().data.users||[]).some(x=>String(x.id)===String(id));
+          const existsGroup = type === "group" && (this.pam.state().data.groups||[]).some(x=>String(x.id)===String(id));
+          if(!existsUser && !existsGroup) return; // Prevent free text submission
+          
+          this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
+          this.data.assignments.push({subject_type:type,subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});
+          e.target.value = "";
+          this.scheduleSave();
+          this.render();
+        };
       });
       this.root.querySelectorAll("[data-remove-assignment]").forEach(el=>el.onclick=()=>{
         const [type, id] = el.dataset.removeAssignment.split(":");
@@ -234,7 +249,11 @@
           await this.save(); const validation=await this.pam.api("/api/access-wizard/validate-step",{method:"POST",body:JSON.stringify({mode:this.mode,resource_type:this.resourceType,step:this.mode==="request_access"?(this.step===4?8:this.step+1):this.step,data:this.data})});if(!validation.valid){this.showError("Popraw dane przed przejściem dalej",validation.errors);return}this.step++;this.render();return;
         }
         if(name==="complete")await this.complete();
-      } catch(error){this.showError(error.message || "Operacja nie powiodła się",error.detail?.errors||error.detail?.detail?.errors||[])}
+      } catch(error){
+        const errs = error.detail?.errors||error.detail?.detail?.errors||[];
+        const tech = error.detail?.technical_detail;
+        this.showError(error.message || "Operacja nie powiodła się", errs, tech);
+      }
     },
 
     async discover() {
