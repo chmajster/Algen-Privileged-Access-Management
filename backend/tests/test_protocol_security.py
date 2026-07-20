@@ -50,8 +50,10 @@ def test_dns_rebinding_is_rejected():
 
 def test_event_metadata_never_discloses_credentials():
     original = {"password": "p", "nested": {"Authorization": "Bearer x", "cookie": "sid=x", "selector": "#password", "value_changed": True}}
-    serialized = json.dumps(sanitize_metadata(original))
+    sanitized = sanitize_metadata(original)
+    serialized = json.dumps(sanitized)
     assert "Bearer x" not in serialized and "sid=x" not in serialized and '"p"' not in serialized
+    assert sanitized["password"] == "[REDACTED]"
     assert "#password" in serialized and "value_changed" in serialized
 
 

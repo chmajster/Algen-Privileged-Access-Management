@@ -195,13 +195,16 @@ def _recording_session(db: DBSession, user: User, session_id: int, request: Requ
     if not is_global_admin(user) and not has_permission(db, user, permission, server_id=session.server_id): raise HTTPException(404, "Session not found")
     if normalized_role(user.role) in {"admin", "operator"}:
         require_step_up(db, user, "view_recording", request, reason="Privileged recording access requires MFA step-up", force=True)
+    write_audit(db, "recording.accessed", f"Accessed recordings for session {session.id}", user_id=user.id, server_id=session.server_id, session_id=session.id, source_ip=source_ip(request))
     return session
 
 
 @router.get("/sessions/{session_id}/artifacts")
 def artifacts(session_id: int, request: Request, user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
     _recording_session(db, user, session_id, request)
-    return [{"id": row.id, "artifact_type": row.artifact_type, "sha256": row.sha256, "mime_type": row.mime_type, "size_bytes": row.size_bytes, "created_at": row.created_at} for row in db.query(SessionArtifact).filter_by(session_id=session_id).all()]
+    result = [{"id": row.id, "artifact_type": row.artifact_type, "sha256": row.sha256, "mime_type": row.mime_type, "size_bytes": row.size_bytes, "created_at": row.created_at} for row in db.query(SessionArtifact).filter_by(session_id=session_id).all()]
+    db.commit()
+    return result
 
 
 def _safe_artifact(db: DBSession, session_id: int, artifact_id: int) -> SessionArtifact:
