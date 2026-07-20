@@ -695,6 +695,7 @@ build_staged_release() {
   info "Building and validating the staged release."
   run python3 -m venv --copies "$STAGED_APP/backend/.venv"
   run "$STAGED_APP/backend/.venv/bin/python" -m pip install --disable-pip-version-check -r "$STAGED_APP/backend/requirements.txt"
+  run "$STAGED_APP/backend/.venv/bin/playwright" install chromium
   (cd "$STAGED_APP/backend" && DATABASE_URL=sqlite:///:memory: PAM_LOCAL_AUTH_MODE=database "$STAGED_APP/backend/.venv/bin/python" -c 'import app.main; import app.bootstrap_admin') \
     || die "Staged backend import validation failed."
 }
