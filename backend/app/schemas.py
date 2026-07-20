@@ -107,6 +107,8 @@ class ServerBase(BaseModel):
     enabled: bool = True
     ssh_admin_user: str | None = None
     ssh_auth_type: str = Field(default="vault_secret", pattern=r"^(vault_secret|vault_key|agent|none)$")
+    rotation_admin_user: str | None = None
+    rotation_auth_type: str = Field(default="password", pattern=r"^(password|private_key|one_time|agent)$")
     session_recording_enabled: bool = False
     command_logging_enabled: bool = True
     gateway_enabled: bool = True
@@ -116,6 +118,7 @@ class ServerBase(BaseModel):
     secret_ref_id: int | None = None
     gateway_secret_ref_id: int | None = None
     ssh_auth_secret_id: int | None = None
+    rotation_secret_id: int | None = None
     rotation_enabled: bool = True
     last_secret_rotation_at: datetime | None = None
     next_secret_rotation_at: datetime | None = None
@@ -172,6 +175,8 @@ class ServerUpdate(BaseModel):
     enabled: bool | None = None
     ssh_admin_user: str | None = None
     ssh_auth_type: str | None = Field(default=None, pattern=r"^(vault_secret|vault_key|agent|none)$")
+    rotation_admin_user: str | None = None
+    rotation_auth_type: str | None = Field(default=None, pattern=r"^(password|private_key|one_time|agent)$")
     session_recording_enabled: bool | None = None
     command_logging_enabled: bool | None = None
     gateway_enabled: bool | None = None
@@ -181,6 +186,7 @@ class ServerUpdate(BaseModel):
     secret_ref_id: int | None = None
     gateway_secret_ref_id: int | None = None
     ssh_auth_secret_id: int | None = None
+    rotation_secret_id: int | None = None
     rotation_enabled: bool | None = None
     last_secret_rotation_at: datetime | None = None
     next_secret_rotation_at: datetime | None = None

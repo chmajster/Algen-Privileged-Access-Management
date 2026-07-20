@@ -90,9 +90,19 @@ class MockExecutor(Executor):
 
 
 class SSHExecutor(Executor):
-    def _resolve_auth(self, server: Server) -> tuple[str | None, str | None, str | None]:
-        secret_id = server.ssh_auth_secret_id or server.secret_ref_id
+    def _resolve_auth(self, server: Server, use_rotation: bool = False, one_time_password: str | None = None) -> tuple[str | None, str | None, str | None]:
+        if use_rotation:
+            if server.rotation_auth_type == "one_time":
+                if not one_time_password:
+                    raise RuntimeError("One-time password required for this operation")
+                return None, None, one_time_password
+            secret_id = server.rotation_secret_id
+        else:
+            secret_id = server.ssh_auth_secret_id or server.secret_ref_id
+
         if not secret_id:
+            if use_rotation and server.rotation_auth_type == "password":
+                raise RuntimeError("Rotation password not configured")
             return server.ssh_private_key_path or settings.pam_executor_ssh_key_path, None, None
         db = SessionLocal()
         try:
@@ -103,7 +113,7 @@ class SSHExecutor(Executor):
             db.commit()
         finally:
             db.close()
-        if secret.secret_type == "ssh_password":
+        if secret.secret_type == "ssh_password" or secret.secret_type == "password":
             return None, None, value
         handle = tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8")
         handle.write(value)
@@ -111,14 +121,14 @@ class SSHExecutor(Executor):
         os.chmod(handle.name, 0o600)
         return handle.name, handle.name, None
 
-    def _run(self, server: Server, command: str) -> str:
+    def _run(self, server: Server, command: str, use_rotation: bool = False, one_time_password: str | None = None) -> str:
         import paramiko
 
         if getattr(server, "registration_status", "approved") != "approved" or not server.enabled:
             raise RuntimeError("Server is not approved for execution")
 
-        key_path, temp_key_path, password = self._resolve_auth(server)
-        admin_user = server.ssh_admin_user or "root"
+        key_path, temp_key_path, password = self._resolve_auth(server, use_rotation=use_rotation, one_time_password=one_time_password)
+        admin_user = (server.rotation_admin_user if use_rotation and server.rotation_admin_user else server.ssh_admin_user) or "root"
         key = paramiko.RSAKey.from_private_key_file(key_path) if key_path else None
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

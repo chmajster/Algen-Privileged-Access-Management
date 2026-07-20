@@ -506,6 +506,25 @@ print_summary() {
   [[ "$LOCAL_AUTH_MODE" == database ]] && auth_label="baza danych aplikacji"
   [[ "$SERVICE_CHOICE" -eq 1 ]] && service_label="tak"
   [[ "$DESKTOP_CHOICE" -eq 1 ]] && desktop_label="tak"
+
+  local commit_info_str=""
+  if [[ "$MODE" == update || "$MODE" == reinstall || "$MODE" == install ]]; then
+    if [[ "$REPO" =~ github\.com/([^/]+)/([^/.]+)(\.git)?$ ]]; then
+      local owner="${BASH_REMATCH[1]}" repo_name="${BASH_REMATCH[2]}" ref="${TAG:-$BRANCH}"
+      if command -v curl >/dev/null && command -v python3 >/dev/null; then
+        local commit_json commit_name commit_date
+        commit_json=$(curl -s "https://api.github.com/repos/$owner/$repo_name/commits/$ref" 2>/dev/null || true)
+        if [[ -n "$commit_json" && "$commit_json" == *"\"commit\":"* ]]; then
+          commit_name=$(echo "$commit_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('commit', {}).get('message', '').split('\n')[0])" 2>/dev/null || true)
+          commit_date=$(echo "$commit_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('commit', {}).get('committer', {}).get('date', ''))" 2>/dev/null || true)
+          if [[ -n "$commit_name" ]]; then
+            commit_info_str=$'\n'"  Docelowy commit:         $commit_name ($commit_date)"
+          fi
+        fi
+      fi
+    fi
+  fi
+
   cat >&2 <<EOF
 
 Podsumowanie operacji
@@ -518,7 +537,7 @@ Podsumowanie operacji
   Dane:                    $DATA_DIR
   Logi:                    $LOG_DIR
   Repozytorium:            $REPO
-  Gałąź/tag:               $ref_description
+  Gałąź/tag:               $ref_description$commit_info_str
   Port HTTP:               $APP_PORT
   Port SSH Gateway:        $GATEWAY_PORT
   Uwierzytelnianie:        $auth_label
