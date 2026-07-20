@@ -17,7 +17,7 @@ from app.identity.local_provider import LocalAuthenticationBackendError, validat
 from app.models import User
 from app.protocol_lifecycle import start_protocol_lifecycle, stop_protocol_lifecycle
 from app.providers.web import web_provider
-from app.routes import access_grants, access_groups, access_requests, access_wizard, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
+from app.routes import access_grants, access_groups, access_requests, access_wizard, alerts, audit_logs, auth, gateway, identity, mfa, policies, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
 from app.seed import seed_demo_data
 
@@ -59,6 +59,20 @@ async def bind_audit_request_context(request: Request, call_next):
     finally:
         reset_audit_user_agent(token)
 
+@app.middleware("http")
+async def policy_middleware(request: Request, call_next):
+    from app.policy.resolver import _effective_policies, resolve_effective_policies
+    db = SessionLocal()
+    try:
+        policies = resolve_effective_policies(db)
+        token = _effective_policies.set(policies)
+        try:
+            return await call_next(request)
+        finally:
+            _effective_policies.reset(token)
+    finally:
+        db.close()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.pam_cors_origins.split(",") if item.strip()],
@@ -84,57 +98,13 @@ app.include_router(sessions.router)
 app.include_router(gateway.router)
 app.include_router(secrets.router)
 app.include_router(secret_rotation.router)
-app.include_router(policy_rules.router)
+
 app.include_router(risk_events.router)
 app.include_router(alerts.router)
 app.include_router(protocol_sessions.router)
 app.include_router(access_wizard.router)
 
 
-@app.get("/api/settings", response_model=schemas.SettingsOut)
-def get_settings(_: User = Depends(get_current_user)):
-    return {
-        "executor_mode": settings.pam_executor_mode,
-        "session_log_import_enabled": settings.pam_session_log_import_enabled,
-        "session_log_dir": settings.pam_session_log_dir,
-        "scheduler_interval_seconds": settings.scheduler_interval_seconds,
-        "access_mode": settings.pam_access_mode,
-        "group_scoped_access": settings.pam_group_scoped_access,
-        "gateway_enabled": settings.pam_gateway_enabled,
-        "gateway_host": settings.pam_gateway_host,
-        "gateway_port": settings.pam_gateway_port,
-        "gateway_session_recording": settings.pam_gateway_session_recording,
-        "gateway_command_logging": settings.pam_gateway_command_logging,
-        "gateway_idle_timeout_seconds": settings.pam_gateway_idle_timeout_seconds,
-        "gateway_max_session_seconds": settings.pam_gateway_max_session_seconds,
-        "vault_mode": settings.pam_vault_mode,
-        "secret_rotation_enabled": settings.pam_secret_rotation_enabled,
-        "secret_rotation_interval_hours": settings.pam_secret_rotation_interval_hours,
-        "ssh_key_rotation_enabled": settings.pam_ssh_key_rotation_enabled,
-        "policy_engine_enabled": settings.pam_policy_engine_enabled,
-        "risk_engine_enabled": settings.pam_risk_engine_enabled,
-        "alerts_enabled": settings.pam_alerts_enabled,
-        "auto_revoke_on_critical_risk": settings.pam_auto_revoke_on_critical_risk,
-        "critical_risk_score": settings.pam_critical_risk_score,
-        "high_risk_score": settings.pam_high_risk_score,
-        "medium_risk_score": settings.pam_medium_risk_score,
-        "auth_providers": settings.pam_auth_providers,
-        "default_auth_provider": settings.pam_default_auth_provider,
-        "local_auth_mode": settings.pam_local_auth_mode,
-        "os_pam_service": settings.pam_os_pam_service,
-        "os_auto_provision": settings.pam_os_auto_provision,
-        "mfa_enabled": settings.pam_mfa_enabled,
-        "mfa_issuer": settings.pam_mfa_issuer,
-        "mfa_required_for_admin": settings.pam_mfa_required_for_admin,
-        "mfa_required_for_prod": settings.pam_mfa_required_for_prod,
-        "mfa_required_for_full_sudo": settings.pam_mfa_required_for_full_sudo,
-        "mfa_required_for_gateway": settings.pam_mfa_required_for_gateway,
-        "mfa_required_for_secret_rotation": settings.pam_mfa_required_for_secret_rotation,
-        "mfa_token_ttl_seconds": settings.pam_mfa_token_ttl_seconds,
-        "step_up_ttl_seconds": settings.pam_step_up_ttl_seconds,
-        "ldap_enabled": settings.pam_ldap_enabled,
-        "oidc_enabled": settings.pam_oidc_enabled,
-    }
 
 
 @app.get("/api/health", response_model=schemas.Message)

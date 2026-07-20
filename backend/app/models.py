@@ -271,19 +271,25 @@ class AccessGrant(Base, TimestampMixin):
     server: Mapped[Server] = relationship("Server")
 
 
-class Policy(Base, TimestampMixin):
-    __tablename__ = "policies"
+class PamPolicy(Base, TimestampMixin):
+    __tablename__ = "pam_policies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(128))
-    role: Mapped[str] = mapped_column(String(32), index=True)
-    environment: Mapped[str] = mapped_column(String(64), index=True)
-    access_type: Mapped[str] = mapped_column(String(32), index=True)
-    max_duration_minutes: Mapped[int] = mapped_column(Integer)
-    requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
-    command_logging_required: Mapped[bool] = mapped_column(Boolean, default=True)
-    session_recording_required: Mapped[bool] = mapped_column(Boolean, default=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    policy_id: Mapped[str] = mapped_column(String(128), index=True)
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="disabled", index=True)
+    value_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), default="global", index=True)
+    scope_target: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    exceptions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    creator: Mapped["User | None"] = relationship("User", foreign_keys=[created_by_id])
+    updater: Mapped["User | None"] = relationship("User", foreign_keys=[updated_by_id])
 
 
 class AuditLog(Base):
@@ -443,7 +449,7 @@ class SessionCommand(Base):
     terminal_output_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
     risk_score: Mapped[int] = mapped_column(Integer, default=0, index=True)
     risk_severity: Mapped[str] = mapped_column(String(32), default="low", index=True)
-    matched_policy_rule_id: Mapped[int | None] = mapped_column(ForeignKey("policy_rules.id"), nullable=True, index=True)
+    matched_policy_id: Mapped[int | None] = mapped_column(ForeignKey("pam_policies.id"), nullable=True, index=True)
     blocked_by_policy: Mapped[bool] = mapped_column(Boolean, default=False)
 
     session: Mapped[Session] = relationship("Session", back_populates="commands")
@@ -630,24 +636,7 @@ class SecretRotationJob(Base, TimestampMixin):
     server: Mapped[Server | None] = relationship("Server")
 
 
-class PolicyRule(Base, TimestampMixin):
-    __tablename__ = "policy_rules"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(128), index=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rule_type: Mapped[str] = mapped_column(String(64), index=True)
-    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    environment: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    user_role: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    server_group: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    access_type: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    condition_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    action_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    risk_score_delta: Mapped[int] = mapped_column(Integer, default=0)
-    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class RiskEvent(Base):
@@ -662,14 +651,14 @@ class RiskEvent(Base):
     event_type: Mapped[str] = mapped_column(String(128), index=True)
     severity: Mapped[str] = mapped_column(String(32), index=True)
     risk_score: Mapped[int] = mapped_column(Integer, default=0, index=True)
-    rule_id: Mapped[int | None] = mapped_column(ForeignKey("policy_rules.id"), nullable=True, index=True)
+    matched_policy_id: Mapped[int | None] = mapped_column(ForeignKey("pam_policies.id"), nullable=True, index=True)
     message: Mapped[str] = mapped_column(Text)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     user: Mapped[User | None] = relationship("User")
     server: Mapped[Server | None] = relationship("Server")
-    rule: Mapped[PolicyRule | None] = relationship("PolicyRule")
+    policy: Mapped["PamPolicy | None"] = relationship("PamPolicy")
 
 
 class Alert(Base, TimestampMixin):

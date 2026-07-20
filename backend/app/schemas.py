@@ -428,40 +428,52 @@ class RevokeIn(BaseModel):
     reason: str = "manual revoke"
 
 
-class PolicyBase(BaseModel):
+class PamPolicyBase(BaseModel):
+    policy_id: str
+    category: str
     name: str
-    role: str
-    environment: str
-    access_type: str
-    max_duration_minutes: int
-    requires_approval: bool = True
-    command_logging_required: bool = True
-    session_recording_required: bool = False
-    enabled: bool = True
+    description: str | None = None
+    status: str = "disabled"
+    value_json: str | None = None
+    scope: str = "global"
+    scope_target: str | None = None
+    priority: int = 100
+    exceptions_json: str | None = None
 
 
-class PolicyCreate(PolicyBase):
+class PamPolicyCreate(PamPolicyBase):
     pass
 
 
-class PolicyUpdate(BaseModel):
+class PamPolicyUpdate(BaseModel):
     name: str | None = None
-    role: str | None = None
-    environment: str | None = None
-    access_type: str | None = None
-    max_duration_minutes: int | None = None
-    requires_approval: bool | None = None
-    command_logging_required: bool | None = None
-    session_recording_required: bool | None = None
-    enabled: bool | None = None
+    description: str | None = None
+    status: str | None = None
+    value_json: str | None = None
+    scope: str | None = None
+    scope_target: str | None = None
+    priority: int | None = None
+    exceptions_json: str | None = None
 
 
-class PolicyOut(PolicyBase):
+class PamPolicyOut(PamPolicyBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     created_at: datetime
     updated_at: datetime
+    created_by_id: int | None = None
+    updated_by_id: int | None = None
+
+
+class PolicyDefinitionOut(BaseModel):
+    policy_id: str
+    name: str
+    description: str
+    category: str
+    value_type: str
+    default_value: Any | None = None
+    allowed_scopes: list[str]
 
 
 class AuditLogOut(ORMModel):
@@ -704,48 +716,7 @@ class SecretRotationJobOut(ORMModel):
     server_hostname: str | None = None
 
 
-class PolicyRuleBase(BaseModel):
-    name: str
-    description: str | None = None
-    rule_type: str
-    priority: int = 100
-    enabled: bool = True
-    environment: str | None = None
-    user_role: str | None = None
-    server_group: str | None = None
-    access_type: str | None = None
-    condition_json: str | None = None
-    action_json: str | None = None
-    risk_score_delta: int = 0
 
-
-class PolicyRuleCreate(PolicyRuleBase):
-    pass
-
-
-class PolicyRuleUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    rule_type: str | None = None
-    priority: int | None = None
-    enabled: bool | None = None
-    environment: str | None = None
-    user_role: str | None = None
-    server_group: str | None = None
-    access_type: str | None = None
-    condition_json: str | None = None
-    action_json: str | None = None
-    risk_score_delta: int | None = None
-
-
-class PolicyRuleOut(PolicyRuleBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    created_by: int | None = None
-    updated_by: int | None = None
-    created_at: datetime
-    updated_at: datetime
 
 
 class PolicyDecisionOut(BaseModel):

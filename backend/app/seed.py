@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.identity.sync import upsert_external_user
-from app.models import Alert, AuthEvent, MfaChallenge, Policy, PolicyRule, RiskEvent, Secret, SecretVersion, Server, ServerGroup, ServerGroupMember, ServerGroupUserMembership, ServerTemplate, ServerTemplateAllowedGroup, ServerTemplateDefaultGroup, StepUpSession, User, utcnow
-from app.policy.default_rules import seed_default_policy_rules
+from app.models import Alert, AuthEvent, MfaChallenge, PamPolicy, RiskEvent, Secret, SecretVersion, Server, ServerGroup, ServerGroupMember, ServerGroupUserMembership, ServerTemplate, ServerTemplateAllowedGroup, ServerTemplateDefaultGroup, StepUpSession, User, utcnow
+from app.policy.registry import get_all_policies
 from app.security import hash_password
 
 
@@ -95,33 +95,20 @@ def seed_demo_data(db: Session) -> None:
         if demo_server:
             demo_server.gateway_secret_ref_id = gateway_secret.id
 
-    policies = [
-        ("user dev ssh", "user", "dev", "ssh_only", 240, False, True, False),
-        ("user test limited sudo", "user", "test", "limited_sudo", 120, True, True, False),
-        ("user prod limited sudo", "user", "prod", "limited_sudo", 60, True, True, True),
-        ("user prod full sudo", "user", "prod", "full_sudo", 60, True, True, True),
-        ("approver dev limited sudo", "approver", "dev", "limited_sudo", 480, False, True, False),
-        ("approver test limited sudo", "approver", "test", "limited_sudo", 480, False, True, False),
-        ("admin all full sudo", "admin", "all", "full_sudo", 480, False, True, True),
-        ("admin all ssh", "admin", "all", "ssh_only", 480, False, True, False),
-        ("admin all limited sudo", "admin", "all", "limited_sudo", 480, False, True, False),
-    ]
-    for name, role, environment, access_type, max_duration, requires_approval, command_logging, recording in policies:
-        if not db.query(Policy).filter(Policy.name == name).first():
+    for pd in get_all_policies():
+        if not db.query(PamPolicy).filter(PamPolicy.policy_id == pd.policy_id).first():
             db.add(
-                Policy(
-                    name=name,
-                    role=role,
-                    environment=environment,
-                    access_type=access_type,
-                    max_duration_minutes=max_duration,
-                    requires_approval=requires_approval,
-                    command_logging_required=command_logging,
-                    session_recording_required=recording,
-                    enabled=True,
+                PamPolicy(
+                    policy_id=pd.policy_id,
+                    category=pd.category,
+                    name=pd.name,
+                    description=pd.description,
+                    status="enabled",
+                    value_json=f'"{pd.default_value}"' if pd.value_type == "string" else str(pd.default_value).lower() if pd.value_type == "boolean" else str(pd.default_value),
+                    scope="global",
+                    priority=100
                 )
             )
-    seed_default_policy_rules(db, PolicyRule)
     demo_user = db.query(User).filter(User.username == "user").first()
     demo_server = db.query(Server).filter(Server.hostname == "demo-linux").first()
     if demo_user and demo_server and not db.query(RiskEvent).filter(RiskEvent.event_type == "dangerous_command").first():
