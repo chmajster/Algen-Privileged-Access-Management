@@ -106,7 +106,7 @@ async function api(path, options = {}) {
 }
 
 async function loadBaseData() {
-  const [servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings, settings] = await Promise.all([
+  const [servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings] = await Promise.all([
     api("/api/servers"),
     api("/api/access-requests"),
     api("/api/access-grants"),
@@ -115,7 +115,6 @@ async function loadBaseData() {
     api("/api/gateway/connections"),
     api("/api/gateway/events"),
     api("/api/gateway/recordings"),
-    api("/api/settings"),
   ]);
   const [riskEvents, alerts] = await Promise.all([api("/api/risk-events"), api("/api/alerts")]);
   let users = [], policies = [], audit = [], secrets = [], rotationJobs = [], policyRules = [], serverGroups = [], identityUsers = [], authEvents = [], accessGroups = [], permissionTemplates = [], permissionCatalog = [], mfaStatus = null, providers = [], policyDefinitions = [];
@@ -129,9 +128,9 @@ async function loadBaseData() {
     audit = await api("/api/audit-logs").catch(() => []);
   }
   if (state.user.role === "admin") {
-    [policies, rotationJobs, policyRules, identityUsers, authEvents, policyDefinitions] = await Promise.all([api("/api/policies"), api("/api/secret-rotation/jobs"), api("/api/policy-rules"), api("/api/identity/users"), api("/api/identity/auth-events"), api("/api/policies/definitions")]);
+    [policies, rotationJobs, identityUsers, authEvents, policyDefinitions] = await Promise.all([api("/api/policies"), api("/api/secret-rotation/jobs"), api("/api/identity/users"), api("/api/identity/auth-events"), api("/api/policies/definitions")]);
   }
-  state.data = { servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings, settings, users, policies, audit, secrets, rotationJobs, policyRules, riskEvents, alerts, serverGroups, accessGroups, permissionTemplates, permissionCatalog, identityUsers, authEvents, mfaStatus, providers, policyDefinitions };
+  state.data = { servers, requests, grants, sessions, commands, gatewayConnections, gatewayEvents, gatewayRecordings, settings: {}, users, policies, audit, secrets, rotationJobs, riskEvents, alerts, serverGroups, accessGroups, permissionTemplates, permissionCatalog, identityUsers, authEvents, mfaStatus, providers, policyDefinitions };
 }
 
 function allowed(item) {
