@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     pam_default_auth_provider: str = "local_db"
     pam_os_pam_service: str = "login"
     pam_os_admin_users: str = "root"
-    pam_mfa_enabled: bool = True
+    pam_mfa_enabled: bool = False
     pam_mfa_issuer: str = "Linux PAM Lite"
     pam_ldap_enabled: bool = False
     pam_ldap_url: str = "ldap://ldap.example.local:389"

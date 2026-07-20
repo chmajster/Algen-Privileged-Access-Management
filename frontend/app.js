@@ -17,7 +17,7 @@ const state = {
 const navItems = [
   ["dashboard", "Dashboard", "bi-speedometer2", "Privileged access overview", ["user", "approver", "admin"]],
   ["adminPanel", "Admin Panel", "bi-tools", "Application and policy management", ["admin"]],
-  ["servers", "Servers", "bi-hdd-network", "Linux targets", ["user", "approver", "admin"]],
+  ["servers", "Access", "bi-hdd-network", "Tutaj będzie lista z serwerami, narzędziami do których pam będzie służył", ["user", "approver", "admin"]],
   ["accessGroups", "Access Management", "bi-people-fill", "Server groups, memberships, roles, permissions, and access matrix", ["user", "approver", "operator", "admin"]],
   ["users", "Users", "bi-people", "Accounts, groups, and effective access", ["approver", "operator", "admin"]],
   ["requests", "Access Requests", "bi-journal-check", "Requests and approvals", ["user", "approver", "admin"]],
