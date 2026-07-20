@@ -38,7 +38,12 @@ def _aware(value):
 
 
 def _authorize_mode(db: DBSession, user: User, mode: str) -> None:
-    permission = "access.request" if mode == "request_access" else "servers.create"
+    # Every authenticated user may prepare the simplified request flow. Final
+    # submission still verifies that the selected profile belongs to a resource
+    # visible to that user.
+    if mode == "request_access":
+        return
+    permission = "servers.create"
     if mode == "assign_existing_resource" and has_permission(db, user, "access.approve"):
         return
     if not has_permission(db, user, permission):

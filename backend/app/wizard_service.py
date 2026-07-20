@@ -37,6 +37,10 @@ PRESETS = {
 }
 
 
+def _before_commit_hook() -> None:
+    """Test seam used to verify that the wizard remains all-or-nothing."""
+
+
 def assert_nonsensitive(value: Any, path: str = "data") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -257,6 +261,8 @@ def complete_transaction(db: DBSession, user: User, draft: AccessWizardDraft, in
     if mode == "request_access":
         server = db.get(Server, int(data["resource_id"])); group = db.get(ServerGroup, int(data["access_group_id"]))
         if not server or not group or not db.query(ServerGroupMember).filter_by(server_group_id=group.id, server_id=server.id).first(): raise ValueError("Wybrany profil nie jest dostępny dla zasobu")
+        membership = db.query(ServerGroupUserMembership).filter_by(server_group_id=group.id, user_id=user.id, enabled=True).first()
+        if not membership: raise ValueError("Wybrany profil nie jest dostępny dla użytkownika")
         request = AccessRequest(user_id=user.id, server_id=server.id, reason=data["justification"], requested_duration_minutes=int(data["duration_minutes"]), requested_access_type=(group.allowed_access_types.split(",")[0] or "ssh_only"), status="pending", approval_required=group.require_approval, mfa_required=group.require_mfa, session_recording_required=group.require_session_recording)
         db.add(request); db.flush(); result = {"mode": mode, "request_id": request.id, "server_id": server.id, "access_group_id": group.id}
         write_audit(db, "access_wizard.request", f"Utworzono wniosek o dostęp do {server.hostname}", user_id=user.id, server_id=server.id, request_id=request.id)
@@ -295,5 +301,7 @@ def complete_transaction(db: DBSession, user: User, draft: AccessWizardDraft, in
             if not db.query(ServerGroupUserMembership).filter_by(server_group_id=group.id, user_id=user_id).first(): db.add(ServerGroupUserMembership(server_group_id=group.id, user_id=user_id, group_role="user", enabled=True, created_by_id=user.id, updated_by_id=user.id))
         db.flush(); result = {"mode": mode, "server_id": server.id, "access_group_id": group.id, "assigned_user_ids": sorted(assigned)}
         write_audit(db, "access_wizard.complete", f"Utworzono konfigurację dostępu do {server.hostname}", user_id=user.id, server_id=server.id, metadata={"mode": mode, "access_group_id": group.id, "assigned_user_count": len(assigned)})
-    submission = AccessWizardSubmission(user_id=user.id, submission_key=submission_key, result_json=json.dumps(result)); db.add(submission); db.delete(draft); db.commit()
+    submission = AccessWizardSubmission(user_id=user.id, submission_key=submission_key, result_json=json.dumps(result)); db.add(submission); db.delete(draft)
+    _before_commit_hook()
+    db.commit()
     return {**result, "duplicate": False}
