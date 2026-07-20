@@ -8,7 +8,7 @@ from app.audit import write_audit
 from app.executor import get_executor
 from app.config import settings
 from app.gateway.service import finish_gateway_connection, gateway_connection_string, seed_mock_gateway_for_grant
-from app.models import AccessGrant, AccessRequest, GatewayConnection, Policy, Server, User, utcnow
+from app.models import AccessGrant, AccessRequest, GatewayConnection, Server, User, utcnow
 from app.policy.engine import PolicyDecision, PolicyEngine
 from app.rbac import has_permission
 from app.security import sanitize_linux_username, validate_linux_username
@@ -32,45 +32,16 @@ def _monitoring_level(decision: PolicyDecision, server: Server) -> str:
     return "basic"
 
 
-def find_policy(db: Session, user: User, server: Server, access_type: str) -> Policy | None:
-    roles = ["operator", "approver"] if user.role in {"operator", "approver"} else [user.role]
-    policies = (
-        db.query(Policy)
-        .filter(
-            Policy.enabled.is_(True),
-            Policy.role.in_(roles),
-            Policy.access_type == access_type,
-        )
-        .all()
-    )
-    for policy in policies:
-        if policy.environment in {server.environment, "all", "*"}:
-            return policy
-    return None
-
-
-def validate_request_against_policy(db: Session, user: User, server: Server, duration: int, access_type: str) -> Policy:
+def evaluate_request_policy(db: Session, user: User, server: Server, duration: int, access_type: str, reason: str | None) -> PolicyDecision:
     if duration not in VALID_DURATIONS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported duration")
     if access_type not in ACCESS_TYPES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported access type")
     if not server.enabled:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Server is disabled")
-    policy = find_policy(db, user, server, access_type)
-    if not policy:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "No policy allows this access")
-    if duration > policy.max_duration_minutes:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Requested duration exceeds policy")
-    if policy.command_logging_required and not server.command_logging_enabled:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Command logging is required by policy")
-    if policy.session_recording_required and not server.session_recording_enabled:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Session recording is required by policy")
-    return policy
 
-
-def evaluate_request_policy(db: Session, user: User, server: Server, duration: int, access_type: str, reason: str | None) -> tuple[Policy, PolicyDecision]:
-    legacy_policy = validate_request_against_policy(db, user, server, duration, access_type)
     decision = PolicyEngine(db).evaluate_access_request(user, server, access_type, duration, reason)
+    
     if server.require_approval:
         decision.requires_approval = True
     if server.require_session_recording:
@@ -83,11 +54,8 @@ def evaluate_request_policy(db: Session, user: User, server: Server, duration: i
         decision.denied = True
         decision.allowed = False
         decision.message = "MFA is required by policy"
-    if legacy_policy.requires_approval:
-        decision.requires_approval = True
-    if legacy_policy.session_recording_required:
-        decision.requires_session_recording = True
-    return legacy_policy, decision
+        
+    return decision
 
 
 def sudo_policy_for(access_type: str, linux_username: str) -> str | None:

@@ -63,7 +63,7 @@ def create_request(payload: schemas.AccessRequestCreate, request: Request, curre
         raise HTTPException(status.HTTP_409_CONFLICT, "Concurrent grant limit reached")
     if not current_user.ssh_public_key:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add your SSH public key first")
-    _, decision = evaluate_request_policy(db, current_user, server, payload.requested_duration_minutes, payload.requested_access_type, payload.reason)
+    decision = evaluate_request_policy(db, current_user, server, payload.requested_duration_minutes, payload.requested_access_type, payload.reason)
     decision.requires_approval = decision.requires_approval or constraints["require_approval"]
     decision.requires_mfa = decision.requires_mfa or constraints["require_mfa"]
     decision.requires_gateway = decision.requires_gateway or constraints["require_gateway"] or constraints["deny_direct"]
