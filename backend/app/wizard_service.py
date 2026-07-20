@@ -188,6 +188,7 @@ async def test_web_connection(db: DBSession, resource: dict[str, Any], connectio
     try:
         url, domain = normalize_url(connection.get("start_url", connection.get("initial_url", ""))); allowed = connection.get("allowed_domains") or [domain]
         if isinstance(allowed, str): allowed = [x.strip() for x in allowed.split(",")]
+        if allowed and len(allowed) == 1 and len(allowed[0]) < 4 and domain.startswith(allowed[0]): allowed = [domain]
         blocked = connection.get("blocked_domains", [])
         if isinstance(blocked, str): blocked = [x.strip() for x in blocked.split(",")]
         checks.append(CheckResult(name="url_validation", status="success", message=f"URL znormalizowany: {url}"))
@@ -220,6 +221,7 @@ async def discover_web_login(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         allowed = payload.get("allowed_domains") or [domain]
         if isinstance(allowed, str): allowed = [x.strip() for x in allowed.split(",")]
+        if allowed and len(allowed) == 1 and len(allowed[0]) < 4 and domain.startswith(allowed[0]): allowed = [domain]
         blocked = payload.get("blocked_domains", [])
         if isinstance(blocked, str): blocked = [x.strip() for x in blocked.split(",")]
         context = await _guarded_web_context(url, allowed, blocked, payload.get("allow_private_network", False), payload.get("allow_subdomains", True))
