@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 WizardMode=Literal["create_resource","assign_existing_resource","request_access"]
@@ -46,6 +46,15 @@ class WebDiscoveryIn(BaseModel):
     blocked_domains:list[str]=Field(default_factory=list)
     allow_private_network:bool=False
     allow_subdomains:bool=True
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_domains(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for field in ("allowed_domains", "blocked_domains"):
+                if isinstance(data.get(field), str):
+                    data[field] = [x.strip() for x in data[field].split(",")]
+        return data
 
 
 class WizardComplete(BaseModel):
