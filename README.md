@@ -682,3 +682,17 @@ uruchamia oba testy na Ubuntu z Pythonem 3.12.
 - SSH gateway mode with terminal recording.
 - Secret manager integration for SSH keys.
 - More granular sudo policies and command risk scoring.
+# Multi-protocol sessions
+
+Algen PAM supports the existing SSH gateway plus server-side web browser and
+VNC provider transports. Web resources use isolated Playwright Chromium contexts
+and are displayed inside the PAM UI through a session-bound CDP screencast
+WebSocket. Target credentials, cookies, headers, browser storage, CDP ports, and
+VNC ports are never returned to the browser.
+
+Configure worker storage and timeouts with the `PAM_ARTIFACT_DIR`,
+`PAM_BROWSER_PROFILE_DIR`, `PAM_WEB_IDLE_TIMEOUT_SECONDS`,
+`PAM_WEB_ABSOLUTE_TIMEOUT_SECONDS`, and `PAM_WEBSOCKET_TOKEN_TTL_SECONDS`
+variables shown in `.env.example`. Production architecture, threat controls, and
+limitations are documented in [docs/MULTI_PROTOCOL_ARCHITECTURE.md](docs/MULTI_PROTOCOL_ARCHITECTURE.md)
+and [docs/MULTI_PROTOCOL_SECURITY.md](docs/MULTI_PROTOCOL_SECURITY.md).

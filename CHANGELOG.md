@@ -66,3 +66,11 @@ Example:
 
 - New access request filter.
 ```
+# Multi-protocol PAM
+
+- Added extensible SSH, web, and VNC access providers while retaining the SSH gateway.
+- Added isolated Playwright/CDP browser sessions, server-side authentication modes,
+  SSRF and DNS-rebinding controls, lifecycle enforcement, generic events, artifacts,
+  authenticated replay/download APIs, and replay/live-session UI.
+- Added additive SQLite initialization and PostgreSQL migration 003, configuration
+  examples, architecture/security documentation, and targeted security tests.
