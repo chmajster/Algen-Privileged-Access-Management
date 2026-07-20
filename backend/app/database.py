@@ -123,6 +123,8 @@ def _ensure_legacy_columns() -> None:
                 "protocol": "VARCHAR(32) DEFAULT 'ssh' NOT NULL",
                 "allowed_domains": "TEXT",
                 "allow_private_network": "BOOLEAN DEFAULT 0 NOT NULL",
+                "tags": "TEXT",
+                "connection_timeout_seconds": "INTEGER DEFAULT 10 NOT NULL",
             },
         )
         add_missing(

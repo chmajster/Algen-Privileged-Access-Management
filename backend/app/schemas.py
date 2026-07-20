@@ -128,6 +128,8 @@ class ServerBase(BaseModel):
     protocol: Literal["ssh", "web", "vnc"] = "ssh"
     allowed_domains: str | None = None
     allow_private_network: bool = False
+    tags: str | None = None
+    connection_timeout_seconds: int = Field(default=10, ge=1, le=120)
 
 
 class ServerCreate(ServerBase):
@@ -190,6 +192,8 @@ class ServerUpdate(BaseModel):
     protocol: Literal["ssh", "web", "vnc"] | None = None
     allowed_domains: str | None = None
     allow_private_network: bool | None = None
+    tags: str | None = None
+    connection_timeout_seconds: int | None = Field(default=None, ge=1, le=120)
     access_group_ids: list[int] | None = None
 
     @field_validator("hostname", "ip_address")

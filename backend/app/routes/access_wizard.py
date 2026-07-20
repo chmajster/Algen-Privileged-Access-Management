@@ -38,7 +38,7 @@ def _aware(value):
 
 
 def _authorize_mode(db: DBSession, user: User, mode: str) -> None:
-    permission = "access.request" if mode == "request_access" else "resources.create"
+    permission = "access.request" if mode == "request_access" else "servers.create"
     if mode == "assign_existing_resource" and has_permission(db, user, "access.approve"):
         return
     if not has_permission(db, user, permission):
@@ -146,8 +146,8 @@ def validate_wizard_step(payload: StepValidation, user: User = Depends(get_curre
 
 @router.post("/test-connection")
 async def test_connection(payload: ConnectionTestIn, user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
-    if not has_permission(db, user, "resources.test_connection"):
-        raise HTTPException(403, "Missing permission: resources.test_connection")
+    if not has_permission(db, user, "servers.test_connection"):
+        raise HTTPException(403, "Missing permission: servers.test_connection")
     checks = await (
         test_ssh_connection(db, payload.connection, payload.secret_inputs)
         if payload.resource_type == "ssh"
@@ -158,8 +158,8 @@ async def test_connection(payload: ConnectionTestIn, user: User = Depends(get_cu
 
 @router.post("/discover-web-login")
 async def discover(payload: WebDiscoveryIn, user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
-    if not has_permission(db, user, "resources.test_connection"):
-        raise HTTPException(403, "Missing permission: resources.test_connection")
+    if not has_permission(db, user, "servers.test_connection"):
+        raise HTTPException(403, "Missing permission: servers.test_connection")
     try:
         return await discover_web_login(payload.model_dump())
     except Exception as exc:
@@ -168,7 +168,7 @@ async def discover(payload: WebDiscoveryIn, user: User = Depends(get_current_use
 
 def _all_step_errors(draft: AccessWizardDraft, data: dict[str, Any]) -> list[dict[str, str]]:
     errors: list[dict[str, str]] = []
-    for step in range(1, 9):
+    for step in range(1, 10):
         errors.extend(validate_step(draft.mode, draft.resource_type, step, data))
     return errors
 
@@ -206,4 +206,4 @@ async def complete(payload: WizardComplete, user: User = Depends(get_current_use
         raise HTTPException(422, {"message": str(exc)}) from exc
     except Exception as exc:
         db.rollback()
-        raise HTTPException(500, {"message": "Nothing was created because the transaction failed", "technical_detail": str(exc)[:500]}) from exc
+        raise HTTPException(500, {"message": "Nic nie zostało utworzone, ponieważ transakcja nie powiodła się"}) from exc

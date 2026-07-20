@@ -187,6 +187,31 @@ class Server(Base, TimestampMixin):
     protocol: Mapped[str] = mapped_column(String(32), default="ssh", index=True)
     allowed_domains: Mapped[str | None] = mapped_column(Text, nullable=True)
     allow_private_network: Mapped[bool] = mapped_column(Boolean, default=False)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    connection_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
+
+
+class AccessWizardDraft(Base, TimestampMixin):
+    __tablename__ = "access_wizard_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    mode: Mapped[str] = mapped_column(String(32), index=True)
+    resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    data_json: Mapped[str] = mapped_column(Text, default="{}")
+    completed_steps_json: Mapped[str] = mapped_column(Text, default="[]")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class AccessWizardSubmission(Base):
+    __tablename__ = "access_wizard_submissions"
+    __table_args__ = (UniqueConstraint("user_id", "submission_key", name="uq_access_wizard_submission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    submission_key: Mapped[str] = mapped_column(String(64), index=True)
+    result_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class AccessRequest(Base, TimestampMixin):

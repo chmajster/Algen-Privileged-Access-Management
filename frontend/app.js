@@ -248,6 +248,7 @@ function renderDashboard() {
     ["Policy Denied 24h", deniedPolicy24h.length],
   ];
   $("#content").innerHTML = `
+    <div class="toolbar"><button class="btn btn-primary" data-action="open-access-wizard"><i class="bi bi-magic"></i> ${state.user.role === "admin" ? "Utwórz dostęp" : "Poproś o dostęp"}</button></div>
     <section class="metric-grid">${metrics.map(([label, value]) => `<div class="metric"><div class="value">${value}</div><div class="label">${label}</div></div>`).join("")}</section>
     <div class="row g-3">
       <div class="col-xl-6">${table(["Grant", "Server", "User", "Expires", "Status"], active.slice(0, 6).map((g) => `<tr><td>#${g.id}</td><td>${escapeHtml(g.server_hostname)}</td><td>${escapeHtml(g.username)}</td><td>${fmt(g.valid_to)}</td><td>${badge(g.status)}</td></tr>`))}</div>
@@ -316,10 +317,9 @@ function renderServers() {
   $("#content").innerHTML = `
     <div class="toolbar">
       ${filterBox("serverFilter", "Filter servers")}
-      <button class="btn btn-primary ${canAdmin ? "" : "d-none"}" id="addServer"><i class="bi bi-plus-lg"></i> Add</button>
-      <button class="btn btn-outline-primary" id="requestAccess"><i class="bi bi-key"></i> Request Access</button>
+      <button class="btn btn-primary" data-action="open-access-wizard"><i class="bi bi-magic"></i> ${canAdmin ? "Utwórz dostęp" : "Poproś o dostęp"}</button>
     </div>
-    ${table(["Host", "IP", "Env", "Criticality", "Groups", "Owner", "SSH secret", "Gateway secret", "Rotation", "Direct", "Gateway", "Logging", "Recording", "Enabled", "Actions"], state.data.servers.map((s) => `
+    ${state.data.servers.length ? table(["Host", "IP", "Env", "Criticality", "Groups", "Owner", "SSH secret", "Gateway secret", "Rotation", "Direct", "Gateway", "Logging", "Recording", "Enabled", "Actions"], state.data.servers.map((s) => `
       <tr class="filter-row"><td>${escapeHtml(s.display_name || s.hostname)}<div class="small text-secondary">${escapeHtml(s.hostname)}</div></td><td>${escapeHtml(s.ip_address)}:${s.ssh_port}</td><td>${escapeHtml(s.environment)}</td><td>${escapeHtml(s.criticality)}</td><td>${(s.access_group_ids || []).map(serverGroupName).join(", ")}</td><td>${escapeHtml(s.owner)}</td>
       <td>${secretName(s.ssh_auth_secret_id || s.secret_ref_id)}</td><td>${secretName(s.gateway_secret_ref_id)}</td><td>${s.rotation_enabled ? "on" : "off"}</td><td>${s.direct_access_enabled ? "on" : "off"}</td><td>${s.gateway_enabled ? "on" : "off"}</td><td>${s.command_logging_enabled ? "on" : "off"}</td><td>${s.session_recording_enabled ? "on" : "off"}</td><td>${s.enabled ? "yes" : "no"}</td>
       <td class="text-nowrap">
@@ -327,10 +327,8 @@ function renderServers() {
         <button class="btn btn-sm btn-outline-secondary ${canAdmin ? "" : "d-none"}" data-action="edit-server" data-id="${s.id}" title="Edit"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-warning ${canAdmin ? "" : "d-none"}" data-action="rotate-server-key" data-id="${s.id}" title="Rotate SSH key"><i class="bi bi-arrow-clockwise"></i></button>
         <button class="btn btn-sm btn-outline-danger ${canAdmin ? "" : "d-none"}" data-action="delete-server" data-id="${s.id}" title="Deactivate"><i class="bi bi-x-circle"></i></button>
-      </td></tr>`))}`;
+      </td></tr>`)) : `<div class="empty-state"><i class="bi bi-hdd-network"></i><h2>Brak zasobów</h2><p>Dodaj pierwszy serwer SSH lub aplikację WWW i od razu przypisz bezpieczny dostęp.</p><button class="btn btn-primary btn-lg" data-action="open-access-wizard">Utwórz dostęp</button></div>`}`;
   applyClientFilter("serverFilter", ".filter-row");
-  $("#requestAccess").onclick = () => openRequestModal();
-  if (canAdmin) $("#addServer").onclick = () => openServerModal();
 }
 
 function secretName(id) {
@@ -364,7 +362,7 @@ function renderAccessGroups() {
   const canCreate = state.user.role === "admin";
   const canManage = ["admin", "operator", "approver"].includes(state.user.role);
   $("#content").innerHTML = `
-    <div class="toolbar">${filterBox("accessGroupFilter", "Filter access groups")}<button id="addAccessGroup" class="btn btn-primary ${canCreate ? "" : "d-none"}"><i class="bi bi-plus-lg"></i> Add group</button></div>
+    <div class="toolbar">${filterBox("accessGroupFilter", "Filter access groups")}<button class="btn btn-primary" data-action="open-access-wizard"><i class="bi bi-magic"></i> ${canCreate ? "Utwórz dostęp" : "Poproś o dostęp"}</button><button id="addAccessGroup" class="btn btn-outline-primary ${canCreate ? "" : "d-none"}"><i class="bi bi-plus-lg"></i> Add group</button></div>
     ${table(["Name", "Environment", "Users", "Servers", "Active grants", "Active sessions", "Controls", "Status", "Actions"], (state.data.accessGroups || []).map((g) => `
       <tr class="filter-row"><td><strong>${escapeHtml(g.name)}</strong><div class="small text-secondary">${escapeHtml(g.description)}</div></td><td>${escapeHtml(g.environment)}</td><td>${g.user_count}</td><td>${g.server_count}</td><td>${g.active_grant_count}</td><td>${g.active_session_count}</td><td class="small">${[g.require_approval?"approval":"",g.require_mfa?"MFA":"",g.require_gateway?"gateway":"",g.require_session_recording?"recording":""].filter(Boolean).join(", ") || "standard"}</td><td>${badge(g.is_active ? "active" : "disabled")}</td><td class="text-nowrap"><button class="btn btn-sm btn-outline-secondary ${canManage ? "" : "d-none"}" data-action="edit-access-group" data-id="${g.id}" title="Members and policy"><i class="bi bi-pencil"></i></button> <button class="btn btn-sm btn-outline-primary ${canManage ? "" : "d-none"}" data-action="permissions-access-group" data-id="${g.id}" title="Permission matrix"><i class="bi bi-grid-3x3-gap"></i></button> <button class="btn btn-sm btn-outline-danger ${canCreate ? "" : "d-none"}" data-action="delete-access-group" data-id="${g.id}" title="Delete or deactivate"><i class="bi bi-x-circle"></i></button></td></tr>`))}`;
   applyClientFilter("accessGroupFilter", ".filter-row");
@@ -1150,6 +1148,7 @@ document.body.addEventListener("click", async (event) => {
   if (!button) return;
   const id = Number(button.dataset.id);
   const action = button.dataset.action;
+  if (action === "open-access-wizard") { window.AccessWizard?.open(); return; }
   try {
     if (action === "test-server") await api(`/api/servers/${id}/test-connection`, { method: "POST" });
     if (action === "edit-server") openServerModal(state.data.servers.find((x) => x.id === id));
@@ -1373,3 +1372,5 @@ if (state.token) {
 } else {
   showLogin();
 }
+
+window.PAM = { api, toast, refresh, render, state: () => state };

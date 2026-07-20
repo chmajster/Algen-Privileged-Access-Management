@@ -17,7 +17,7 @@ from app.identity.local_provider import LocalAuthenticationBackendError, validat
 from app.models import User
 from app.protocol_lifecycle import start_protocol_lifecycle, stop_protocol_lifecycle
 from app.providers.web import web_provider
-from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
+from app.routes import access_grants, access_groups, access_requests, access_wizard, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
 from app.seed import seed_demo_data
 
@@ -45,7 +45,7 @@ app = FastAPI(title="Algen Multi-Protocol PAM", version="3.0.0", lifespan=lifesp
 async def redact_validation_secrets(_: Request, exc: RequestValidationError):
     errors = exc.errors()
     for error in errors:
-        if any(str(part).lower() in {"password", "secret", "token", "private_key"} for part in error.get("loc", ())):
+        if any(any(marker in str(part).lower() for marker in ("password", "secret", "token", "private_key", "authorization", "cookie")) for part in error.get("loc", ())):
             error["input"] = "[REDACTED]"
             error.pop("ctx", None)
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
@@ -88,6 +88,7 @@ app.include_router(policy_rules.router)
 app.include_router(risk_events.router)
 app.include_router(alerts.router)
 app.include_router(protocol_sessions.router)
+app.include_router(access_wizard.router)
 
 
 @app.get("/api/settings", response_model=schemas.SettingsOut)
