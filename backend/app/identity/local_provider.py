@@ -35,6 +35,22 @@ def validate_os_auth_backend() -> None:
 def _admin_usernames() -> set[str]:
     return {item.strip() for item in settings.pam_os_admin_users.split(",") if item.strip()}
 
+def _is_os_admin(username: str) -> bool:
+    if username in _admin_usernames():
+        return True
+    try:
+        import grp
+        for group in ["sudo", "wheel", "admin"]:
+            try:
+                g = grp.getgrnam(group)
+                if username in g.gr_mem:
+                    return True
+            except KeyError:
+                pass
+    except ImportError:
+        pass
+    return False
+
 
 def authenticate_shadow_account(username: str, password: str) -> bool | None:
     """Verify a local shadow password when the service can read /etc/shadow.
@@ -120,13 +136,13 @@ def _provision_os_user(db: DBSession, username: str, account) -> User:
         username=username,
         email=_available_email(db, username),
         password_hash=hash_password(secrets.token_urlsafe(32)),
-        role="admin" if username in _admin_usernames() else "user",
+        role="admin" if _is_os_admin(username) else "user",
         is_active=True,
         auth_provider="local_os",
         external_id=f"uid:{account.pw_uid}",
         display_name=(account.pw_gecos or username).split(",", 1)[0],
         email_verified=False,
-        mfa_required=username in _admin_usernames(),
+        mfa_required=_is_os_admin(username),
     )
     db.add(user)
     db.flush()
@@ -156,7 +172,7 @@ def authenticate_local_os(db: DBSession, username: str, password: str) -> tuple[
         user.auth_provider = "local_os"
         user.external_id = f"uid:{account.pw_uid}"
         user.display_name = user.display_name or (account.pw_gecos or username).split(",", 1)[0]
-        if username in _admin_usernames():
+        if _is_os_admin(username):
             user.role = "admin"
             user.mfa_required = True
     return user, [{"name": "linux-local", "source": "pam"}]
