@@ -8,6 +8,7 @@ set -Eeuo pipefail
 readonly APP_ID="algen-pam"
 readonly APP_TITLE="Algen PAM / Linux PAM Lite"
 readonly INSTALLER_VERSION="2.0.0"
+readonly INSTALLER_COMMIT_DATE="2026-07-20 20:07:25 +0200"
 readonly DEFAULT_REPO="https://github.com/chmajster/Algen-Privileged-Access-Management"
 readonly DEFAULT_BRANCH="main"
 readonly REQUIRED_PYTHON_MINOR=12
@@ -86,6 +87,7 @@ section() {
 banner() {
   [[ "$SILENT" -eq 0 ]] || return 0
   printf '%s\n' 'Algen PAM - instalator Linux' >&2
+  printf 'Data ostatniego commitu: %s\n' "$INSTALLER_COMMIT_DATE" >&2
 }
 die() {
   ERROR_REPORTED=1
@@ -1102,6 +1104,7 @@ EOF
     remove-app) ok "Kod aplikacji i integracje zostały usunięte; stan instalacji zachowano." ;;
     uninstall) ok "Pełna deinstalacja została zakończona." ;;
   esac
+  printf '\nData ostatniego commitu: %s\n' "$INSTALLER_COMMIT_DATE" >&2
 }
 main() {
   parse_args "$@"                          # 1. Parsowanie argumentów
