@@ -1,5 +1,7 @@
 import logging
+import hmac
 import secrets
+import time
 
 try:
     import pwd
@@ -34,7 +36,48 @@ def _admin_usernames() -> set[str]:
     return {item.strip() for item in settings.pam_os_admin_users.split(",") if item.strip()}
 
 
+def authenticate_shadow_account(username: str, password: str) -> bool | None:
+    """Verify a local shadow password when the service can read /etc/shadow.
+
+    ``None`` means that the shadow backend is unavailable and PAM should be
+    attempted. A definite rejection is returned as ``False`` and must not fall
+    through to another password backend.
+    """
+    try:
+        import crypt
+        import spwd
+    except ImportError:  # pragma: no cover - platform dependent
+        return None
+
+    try:
+        entry = spwd.getspnam(username)
+    except PermissionError:
+        return None
+    except KeyError:
+        return False
+    except OSError as exc:
+        logger.warning("Cannot read shadow entry for user=%s: %s", username, exc)
+        return None
+
+    password_hash = entry.sp_pwdp or ""
+    if not password_hash or password_hash.startswith(("!", "*")):
+        return False
+
+    today = int(time.time() // 86400)
+    if entry.sp_expire >= 0 and today >= entry.sp_expire:
+        return False
+    if entry.sp_lstchg >= 0 and entry.sp_max >= 0 and today >= entry.sp_lstchg + entry.sp_max:
+        return False
+
+    candidate = crypt.crypt(password, password_hash)
+    return bool(candidate) and hmac.compare_digest(candidate, password_hash)
+
+
 def authenticate_os_account(username: str, password: str) -> bool:
+    shadow_result = authenticate_shadow_account(username, password)
+    if shadow_result is not None:
+        return shadow_result
+
     validate_os_auth_backend()
     try:
         import pam

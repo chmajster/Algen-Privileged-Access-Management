@@ -92,6 +92,24 @@ def test_local_os_backend_error_returns_503(client, monkeypatch):
     assert "PAM" in response.json()["detail"]
 
 
+def test_shadow_password_verification(monkeypatch):
+    from app.identity import local_provider
+
+    class ShadowEntry:
+        sp_pwdp = "$6$test$hash"
+        sp_expire = -1
+        sp_lstchg = 1
+        sp_max = 99999
+
+    fake_crypt = SimpleNamespace(crypt=lambda password, password_hash: password_hash if password == "correct" else "different")
+    fake_spwd = SimpleNamespace(getspnam=lambda username: ShadowEntry())
+    monkeypatch.setitem(__import__("sys").modules, "crypt", fake_crypt)
+    monkeypatch.setitem(__import__("sys").modules, "spwd", fake_spwd)
+
+    assert local_provider.authenticate_shadow_account("server-user", "correct") is True
+    assert local_provider.authenticate_shadow_account("server-user", "wrong") is False
+
+
 def test_health_returns_503_when_os_pam_is_unavailable(client, monkeypatch):
     from app.identity.local_provider import LocalAuthenticationBackendError
 
