@@ -131,11 +131,15 @@
     },
 
     assignmentsStep() {
-      return `<div class="span-2">
+      return `<div class="span-2 position-relative">
             <h6>Kto będzie miał dostęp?</h6>
-            <div class="text-muted small mb-3">Wyszukaj i wybierz użytkowników lub grupy, którzy od razu otrzymają dostęp.</div>
-            <input type="text" class="form-control mb-3" placeholder="Wpisz nazwę..." list="wizard-users-list" data-wizard-search="user" id="wizardUserSearchInput" autocomplete="off">
-            <datalist id="wizard-users-list"></datalist>
+            <div class="text-muted small mb-3">Wyszukaj i wybierz użytkowników, którzy od razu otrzymają dostęp.</div>
+            <div class="dropdown">
+              <input type="text" class="form-control mb-3" placeholder="Wpisz nazwę... (min. 4 znaki)" data-wizard-search="user" id="wizardUserSearchInput" autocomplete="off" data-bs-toggle="dropdown" aria-expanded="false">
+              <ul class="dropdown-menu w-100 shadow-lg" id="wizardUserSearchResults" style="max-height: 300px; overflow-y: auto;">
+                <li><span class="dropdown-item text-muted small">Wpisz co najmniej 4 znaki, by wyszukać...</span></li>
+              </ul>
+            </div>
             <div class="d-flex flex-wrap gap-2">
               ${(this.data.assignments||[]).map(a=>{
                 let name = a.subject_identifier;
@@ -143,8 +147,7 @@
                   const u = (this.pam.state().data.users||[]).find(x=>String(x.id)===String(a.subject_identifier));
                   if (u) name = u.username;
                 } else if (a.subject_type === 'group') {
-                  const g = (this.pam.state().data.groups||[]).find(x=>String(x.id)===String(a.subject_identifier));
-                  if (g) name = g.name + " (Grupa)";
+                  name = String(a.subject_identifier) + " (Grupa)";
                 }
                 return `<div class="badge bg-primary p-2 d-flex align-items-center">${name} <i class="bi bi-x-circle ms-2 cursor-pointer" data-remove-assignment="${a.subject_type}:${a.subject_identifier}"></i></div>`;
               }).join("")}
@@ -190,35 +193,37 @@
       this.root.querySelectorAll("[data-secret-name]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretName;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:el.value,secret_type:k.includes("key")?"ssh_private_key":"password",value:this.secretInputs[k]?.value||""}});
       this.root.querySelectorAll("[data-secret-value]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretValue;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:this.secretInputs[k]?.name||k,secret_type:k.includes("key")?"ssh_private_key":"password",value:el.value}});
       this.root.querySelectorAll("[data-assignment-user]").forEach(el=>el.onchange=()=>{const id=String(el.dataset.assignmentUser);this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type==="user"&&String(a.subject_identifier)===id));if(el.checked)this.data.assignments.push({subject_type:"user",subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});this.scheduleSave()});
-      this.root.querySelectorAll("[data-wizard-search]").forEach(el=>{
-        el.oninput = (e) => {
+      const searchInput = this.root.querySelector("#wizardUserSearchInput");
+      const searchResults = this.root.querySelector("#wizardUserSearchResults");
+      if(searchInput && searchResults) {
+        let dropdown = new bootstrap.Dropdown(searchInput);
+        searchInput.oninput = (e) => {
           const val = e.target.value.toLowerCase();
-          const datalist = this.root.querySelector("#wizard-users-list");
           if(val.length >= 4) {
              const users = (this.pam.state().data.users||[]).filter(u => String(u.id)===val || u.username.toLowerCase().includes(val) || (u.first_name && u.first_name.toLowerCase().includes(val)) || (u.last_name && u.last_name.toLowerCase().includes(val)));
-             const groups = (this.pam.state().data.groups||[]).filter(g => ('g'+g.id)===val || g.name.toLowerCase().includes(val));
-             datalist.innerHTML = users.map(u=>`<option value="${u.id}">${u.username} ${u.first_name?`(${u.first_name} ${u.last_name})`:""}</option>`).join("") + groups.map(g=>`<option value="g${g.id}">${g.name} (Grupa)</option>`).join("");
+             
+             let html = users.map(u => `<li><a class="dropdown-item d-flex align-items-center gap-2" href="#" data-add-assignment="user:${u.id}"><i class="bi bi-person text-muted"></i> <div><strong>${esc(u.username)}</strong>${u.first_name?`<br><small class="text-muted">${esc(u.first_name)} ${esc(u.last_name)}</small>`:""}</div></a></li>`).join("");
+             
+             if (!html) html = `<li><span class="dropdown-item text-muted small">Brak wyników dla "${esc(e.target.value)}".</span></li>`;
+             searchResults.innerHTML = html;
+             
+             searchResults.querySelectorAll("[data-add-assignment]").forEach(el => el.onclick = (ev) => {
+               ev.preventDefault();
+               const [type, id] = el.dataset.addAssignment.split(":");
+               this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
+               this.data.assignments.push({subject_type:type,subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});
+               searchInput.value = "";
+               dropdown.hide();
+               this.scheduleSave();
+               this.render();
+             });
           } else {
-             datalist.innerHTML = "";
+             searchResults.innerHTML = `<li><span class="dropdown-item text-muted small">Wpisz co najmniej 4 znaki, by wyszukać...</span></li>`;
           }
+          dropdown.show();
         };
-        el.onchange = (e) => {
-          const val = e.target.value;
-          if(!val)return;
-          let type = "user", id = val;
-          if(val.startsWith("g")){ type="group"; id=val.slice(1); }
-          
-          const existsUser = type === "user" && (this.pam.state().data.users||[]).some(x=>String(x.id)===String(id));
-          const existsGroup = type === "group" && (this.pam.state().data.groups||[]).some(x=>String(x.id)===String(id));
-          if(!existsUser && !existsGroup) return; // Prevent free text submission
-          
-          this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
-          this.data.assignments.push({subject_type:type,subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});
-          e.target.value = "";
-          this.scheduleSave();
-          this.render();
-        };
-      });
+        searchInput.onfocus = () => dropdown.show();
+      }
       this.root.querySelectorAll("[data-remove-assignment]").forEach(el=>el.onclick=()=>{
         const [type, id] = el.dataset.removeAssignment.split(":");
         this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
