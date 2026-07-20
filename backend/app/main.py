@@ -13,16 +13,12 @@ from app.audit import reset_audit_user_agent, set_audit_user_agent
 from app.auth import get_current_user
 from app.config import settings
 from app.database import SessionLocal, init_db
-<<<<<<< HEAD
-from app.lifecycle import start_lifecycle_monitor, stop_lifecycle_monitor
-from app.providers.web import web_provider
-from app.routes import access_wizard, auth, domain, identity, mfa, secrets
-=======
 from app.identity.local_provider import LocalAuthenticationBackendError, validate_os_auth_backend
 from app.models import User
-from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
+from app.protocol_lifecycle import start_protocol_lifecycle, stop_protocol_lifecycle
+from app.providers.web import web_provider
+from app.routes import access_grants, access_groups, access_requests, access_wizard, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
->>>>>>> parent of 0a6886e (WOW WTF)
 from app.seed import seed_demo_data
 
 
@@ -36,15 +32,13 @@ async def lifespan(app: FastAPI):
         db.close()
     tick()
     start_scheduler()
+    start_protocol_lifecycle()
     yield
+    await stop_protocol_lifecycle()
     stop_scheduler()
 
 
-<<<<<<< HEAD
-app=FastAPI(title="Algen Multi-Protocol PAM",version="3.0.0",lifespan=lifespan)
-=======
-app = FastAPI(title="Linux PAM Lite", version="1.0.0", lifespan=lifespan)
->>>>>>> parent of 0a6886e (WOW WTF)
+app = FastAPI(title="Algen Multi-Protocol PAM", version="3.0.0", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -93,16 +87,10 @@ app.include_router(secret_rotation.router)
 app.include_router(policy_rules.router)
 app.include_router(risk_events.router)
 app.include_router(alerts.router)
+app.include_router(access_wizard.router)
+app.include_router(protocol_sessions.router)
 
 
-<<<<<<< HEAD
-app.add_middleware(CORSMiddleware,allow_origins=[],allow_credentials=True,allow_methods=["GET","POST","PUT","DELETE"],allow_headers=["Authorization","Content-Type"])
-for route in (auth.router,mfa.router,identity.router,secrets.router,domain.router,access_wizard.router): app.include_router(route)
-
-
-@app.get("/api/health")
-def health(): return {"message":"ok","schema":3,"browser_worker":"healthy" if web_provider.healthy() else "unhealthy","active_browser_sessions":len(web_provider.runtimes)}
-=======
 @app.get("/api/settings", response_model=schemas.SettingsOut)
 def get_settings(_: User = Depends(get_current_user)):
     return {
@@ -151,7 +139,7 @@ def get_settings(_: User = Depends(get_current_user)):
 
 @app.get("/api/health", response_model=schemas.Message)
 def health():
-    detail = {"local_auth_mode": settings.pam_local_auth_mode}
+    detail = {"local_auth_mode": settings.pam_local_auth_mode, "schema": 3, "browser_worker": "healthy" if web_provider.healthy() else "unhealthy", "active_browser_sessions": len(web_provider.runtimes)}
     if settings.pam_local_auth_mode == "os":
         try:
             validate_os_auth_backend()
@@ -160,7 +148,6 @@ def health():
         detail["pam"] = "available"
         detail["pam_service"] = settings.pam_os_pam_service
     return {"message": "ok", "detail": detail}
->>>>>>> parent of 0a6886e (WOW WTF)
 
 
 FRONTEND_DIR = Path(__file__).parents[2] / "frontend"

@@ -9,6 +9,8 @@ const state = {
   selectedSecretLogs: [],
   pendingMfaLogin: null,
   pendingStepUpAction: null,
+  selectedReplay: null,
+  liveSession: null,
   data: {},
 };
 
@@ -390,6 +392,7 @@ function renderGrants() {
     ${table(["ID", "User", "Server", "Mode", "Linux user", "Type", "Risk", "Monitoring", "Connect", "Valid to", "Status", "Actions"], state.data.grants.map((g) => `
       <tr class="filter-row"><td>#${g.id}</td><td>${escapeHtml(g.username)}</td><td>${escapeHtml(g.server_hostname)}</td><td>${escapeHtml(g.access_mode)}</td><td><code>${escapeHtml(g.linux_username)}</code></td><td>${g.access_type}</td><td>${g.calculated_risk_score || 0}</td><td>${escapeHtml(g.monitoring_level)}</td><td class="wrap"><code>${escapeHtml(connectionHint(g))}</code></td><td>${fmt(g.valid_to)}</td><td>${badge(g.status)}</td>
       <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-success ${g.status === "active" && (state.data.servers.find((s) => s.id === g.server_id)?.protocol || "ssh") !== "ssh" ? "" : "d-none"}" data-action="launch-session" data-id="${g.id}" title="Launch controlled session"><i class="bi bi-display"></i></button>
         <button class="btn btn-sm btn-outline-primary ${canRevoke ? "" : "d-none"}" data-action="import-grant-logs" data-id="${g.id}" title="Import logs"><i class="bi bi-arrow-repeat"></i></button>
         <button class="btn btn-sm btn-outline-danger ${canRevoke && g.status === "active" ? "" : "d-none"}" data-action="revoke-grant" data-id="${g.id}" title="Revoke"><i class="bi bi-slash-circle"></i></button>
       </td></tr>`))}`;
@@ -411,6 +414,7 @@ function renderSessions() {
     ${table(["ID", "Mode", "User", "Linux user", "Server", "Grant", "Client IP", "Target", "Target user", "Recording", "End reason", "Start", "Duration", "Status", "Commands", "Actions"], state.data.sessions.map((s) => `
       <tr class="filter-row"><td>#${s.id}</td><td>${escapeHtml(s.access_mode)}</td><td>${escapeHtml(s.username)}</td><td><code>${escapeHtml(s.linux_username)}</code></td><td>${escapeHtml(s.server_hostname)}</td><td>#${s.grant_id}</td><td>${escapeHtml(s.client_ip || s.source_ip)}</td><td>${escapeHtml(s.target_host || "")}</td><td>${escapeHtml(s.target_user || "")}</td><td>${s.recording_enabled ? "yes" : "no"}</td><td>${escapeHtml(s.termination_reason)}</td><td>${fmt(s.started_at)}</td><td>${s.duration_seconds || ""}s</td><td>${badge(s.status)}</td><td>${s.command_count ?? ""}</td>
       <td><button class="btn btn-sm btn-outline-primary" data-action="view-session" data-id="${s.id}" title="Details"><i class="bi bi-terminal"></i></button>
+      <button class="btn btn-sm btn-outline-info ${s.protocol === "web" || s.protocol === "vnc" ? "" : "d-none"}" data-action="replay-session" data-id="${s.id}" title="Replay"><i class="bi bi-film"></i></button>
       <button class="btn btn-sm btn-outline-secondary ${s.session_record_path && !s.session_record_path.startsWith("session_id=") ? "" : "d-none"}" data-action="recording" data-id="${s.id}" title="Recording"><i class="bi bi-play-btn"></i></button></td></tr>`))}`;
   applyClientFilter("sessionFilter", ".filter-row");
   $("#exportSessions").onclick = () => downloadCsv("/api/sessions/export.csv", "sessions.csv");

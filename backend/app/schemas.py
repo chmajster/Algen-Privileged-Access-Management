@@ -125,6 +125,9 @@ class ServerBase(BaseModel):
     require_session_recording: bool = False
     require_approval: bool = False
     require_mfa: bool = False
+    protocol: Literal["ssh", "web", "vnc"] = "ssh"
+    allowed_domains: str | None = None
+    allow_private_network: bool = False
 
 
 class ServerCreate(ServerBase):
@@ -184,6 +187,9 @@ class ServerUpdate(BaseModel):
     require_session_recording: bool | None = None
     require_approval: bool | None = None
     require_mfa: bool | None = None
+    protocol: Literal["ssh", "web", "vnc"] | None = None
+    allowed_domains: str | None = None
+    allow_private_network: bool | None = None
     access_group_ids: list[int] | None = None
 
     @field_validator("hostname", "ip_address")
@@ -498,6 +504,10 @@ class SessionOut(ORMModel):
     idle_timeout_seconds: int | None = None
     max_session_seconds: int | None = None
     termination_reason: str | None = None
+    protocol: str = "ssh"
+    last_heartbeat_at: datetime | None = None
+    authentication_expires_at: datetime | None = None
+    absolute_timeout_seconds: int | None = None
     created_at: datetime
     updated_at: datetime
     username: str | None = None

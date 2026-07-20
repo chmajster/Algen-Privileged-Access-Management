@@ -13,6 +13,7 @@ from app.models import AccessGrant, AccessRequest, GatewayConnection, Session, S
 from app.mfa.step_up import require_step_up
 from app.rbac import has_permission, is_global_admin, normalized_role, permitted_server_ids
 from app.gateway.service import finish_gateway_connection
+from app.protocol_lifecycle import terminate_protocol_session
 
 
 router = APIRouter(prefix="/api", tags=["sessions"])
@@ -155,13 +156,18 @@ def session_commands(
 
 
 @router.post("/sessions/{session_id:int}/terminate", response_model=schemas.SessionOut)
-def terminate_session(session_id: int, request: Request, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+async def terminate_session(session_id: int, request: Request, current_user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
     item = db.get(Session, session_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if not has_permission(db, current_user, "sessions.terminate", server_id=item.server_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if item.status == "active":
+        if item.protocol in {"web", "vnc"}:
+            await terminate_protocol_session(db, item, "administrative_termination")
+            write_audit(db, "session.terminated", f"Terminated session {item.id}", user_id=current_user.id, server_id=item.server_id, session_id=item.id, source_ip=source_ip(request))
+            db.commit(); db.refresh(item)
+            return _session_out(item)
         connection = db.query(GatewayConnection).filter(GatewayConnection.session_id == item.id, GatewayConnection.status == "active").first()
         if connection:
             finish_gateway_connection(db, connection, "manual_terminate")
