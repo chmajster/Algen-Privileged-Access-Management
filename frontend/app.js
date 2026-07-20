@@ -693,6 +693,8 @@ function renderPolicyDetails(insts) {
           <form id="policyForm" onsubmit="event.preventDefault(); savePolicyInst();">
             <input type="hidden" id="pol_id" value="${i.id || ''}">
             <input type="hidden" id="pol_policy_id" value="${d.policy_id}">
+            <input type="hidden" id="pol_category" value="${escapeHtml(d.category)}">
+            <input type="hidden" id="pol_name" value="${escapeHtml(d.name)}">
             
             <div class="mb-3">
               <label class="form-label">Status</label>
@@ -717,7 +719,11 @@ function renderPolicyDetails(insts) {
             
             <div class="mb-3" id="targetDiv" style="display: ${i.scope_type === 'global' ? 'none' : 'block'};">
               <label class="form-label">Scope Target</label>
-              <input type="text" class="form-control" id="pol_scope_target" value="${escapeHtml(i.scope_target || '')}" placeholder="e.g. prod, admin-group, ssh">
+              <input type="text" class="form-control" id="pol_scope_target" value="${escapeHtml(i.scope_target || '')}" placeholder="e.g. prod, admin-group, ssh" list="scope-targets-list">
+              <datalist id="scope-targets-list">
+                ${(state.data.users || []).map(u => `<option value="${u.id}">${u.username} ${u.first_name?`(${u.first_name} ${u.last_name})`:''}</option>`).join('')}
+                ${(state.data.groups || []).map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
+              </datalist>
             </div>
             
             <div class="mb-3">
@@ -772,9 +778,11 @@ async function savePolicyInst() {
   const id = $("#pol_id").value;
   const payload = {
     policy_id: $("#pol_policy_id").value,
+    category: $("#pol_category") ? $("#pol_category").value : "general",
+    name: $("#pol_name") ? $("#pol_name").value : $("#pol_policy_id").value,
     status: $("#pol_status").value,
     value_json: $("#pol_value_json").value,
-    scope_type: $("#pol_scope_type").value,
+    scope: $("#pol_scope_type").value,
     scope_target: $("#pol_scope_target").value || null,
     priority: parseInt($("#pol_priority").value, 10),
     description: $("#pol_description").value || null,
@@ -788,7 +796,7 @@ async function savePolicyInst() {
     return;
   }
   
-  if (payload.scope_type !== 'global' && !payload.scope_target) {
+  if (payload.scope !== 'global' && !payload.scope_target) {
     toast("Scope target is required when scope type is not global", "danger");
     return;
   }

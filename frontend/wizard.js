@@ -131,8 +131,28 @@
     },
 
     assignmentsStep() {
-      const users = this.pam.state().data.users || []; const selected = new Set((this.data.assignments||[]).filter(a=>a.subject_type==="user").map(a=>String(a.subject_identifier)));
-      return `<p>Wybierz użytkowników albo dodaj całą rolę. Przydział nie ujawnia poświadczeń zasobu.</p><div class="assignment-grid">${users.map((u)=>`<label><input type="checkbox" data-assignment-user="${u.id}" ${selected.has(String(u.id))?"checked":""}><span><strong>${esc(u.username)}</strong><small>${esc(u.email)} · ${esc(u.role)}</small></span></label>`).join("")}</div><div class="form-grid mt-3">${this.select("assignment_role","Dodaj użytkowników z rolą",[["","Nie dodawaj roli"],["user","Wszyscy użytkownicy"],["operator","Wszyscy operatorzy"],["auditor","Wszyscy audytorzy"]])}${this.select("assignment_mode","Sposób korzystania",[["request_required","Wniosek i akceptacja"],["direct_launch","Uruchomienie bez wniosku (w granicach polityki)"]])}</div>`;
+      return `<div class="span-2">
+            <h6>Kto będzie miał dostęp?</h6>
+            <div class="text-muted small mb-3">Wyszukaj i wybierz użytkowników lub grupy, którzy od razu otrzymają dostęp.</div>
+            <input type="text" class="form-control mb-3" placeholder="Wpisz nazwę..." list="wizard-users-list" data-wizard-search="user">
+            <datalist id="wizard-users-list">
+              ${(this.pam.state().data.users||[]).map(u=>`<option value="${u.id}">${u.username} ${u.first_name?`(${u.first_name} ${u.last_name})`:""}</option>`).join("")}
+              ${(this.pam.state().data.groups||[]).map(g=>`<option value="g${g.id}">${g.name} (Grupa)</option>`).join("")}
+            </datalist>
+            <div class="d-flex flex-wrap gap-2">
+              ${(this.data.assignments||[]).map(a=>{
+                let name = a.subject_identifier;
+                if (a.subject_type === 'user') {
+                  const u = (this.pam.state().data.users||[]).find(x=>String(x.id)===String(a.subject_identifier));
+                  if (u) name = u.username;
+                } else if (a.subject_type === 'group') {
+                  const g = (this.pam.state().data.groups||[]).find(x=>String(x.id)===String(a.subject_identifier));
+                  if (g) name = g.name + " (Grupa)";
+                }
+                return `<div class="badge bg-primary p-2 d-flex align-items-center">${name} <i class="bi bi-x-circle ms-2 cursor-pointer" data-remove-assignment="${a.subject_type}:${a.subject_identifier}"></i></div>`;
+              }).join("")}
+            </div>
+          </div>`;
     },
 
     approvalStep() {
@@ -173,6 +193,23 @@
       this.root.querySelectorAll("[data-secret-name]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretName;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:el.value,secret_type:k.includes("key")?"ssh_private_key":"password",value:this.secretInputs[k]?.value||""}});
       this.root.querySelectorAll("[data-secret-value]").forEach(el=>el.oninput=()=>{const k=el.dataset.secretValue;this.secretInputs[k]={...(this.secretInputs[k]||{}),name:this.secretInputs[k]?.name||k,secret_type:k.includes("key")?"ssh_private_key":"password",value:el.value}});
       this.root.querySelectorAll("[data-assignment-user]").forEach(el=>el.onchange=()=>{const id=String(el.dataset.assignmentUser);this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type==="user"&&String(a.subject_identifier)===id));if(el.checked)this.data.assignments.push({subject_type:"user",subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});this.scheduleSave()});
+      this.root.querySelectorAll("[data-wizard-search]").forEach(el=>el.onchange=(e)=>{
+        const val = e.target.value;
+        if(!val)return;
+        let type = "user", id = val;
+        if(val.startsWith("g")){ type="group"; id=val.slice(1); }
+        this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
+        this.data.assignments.push({subject_type:type,subject_identifier:id,assignment_mode:this.field("assignment_mode","request_required")});
+        e.target.value = "";
+        this.scheduleSave();
+        this.render();
+      });
+      this.root.querySelectorAll("[data-remove-assignment]").forEach(el=>el.onclick=()=>{
+        const [type, id] = el.dataset.removeAssignment.split(":");
+        this.data.assignments=(this.data.assignments||[]).filter(a=>!(a.subject_type===type&&String(a.subject_identifier)===id));
+        this.scheduleSave();
+        this.render();
+      });
       this.root.querySelectorAll("[data-picker]").forEach(el=>el.onclick=()=>{this.pickerRole=el.dataset.picker;this.render()});
       this.root.querySelectorAll("[data-selector]").forEach(el=>el.onclick=()=>{const role=this.pickerRole||el.dataset.suggested;const map={username:"username_selector",password:"password_selector",submit:"submit_selector",success:"success_dom_selector"};this.set(`connection.${map[role]}`,el.dataset.selector);this.pickerRole=role==="username"?"password":role==="password"?"submit":role==="submit"?"success":"success";this.scheduleSave();this.render()});
       this.root.querySelectorAll("[data-request-resource]").forEach(el=>el.onclick=()=>{this.set("resource_id",Number(el.dataset.requestResource));this.set("access_group_id",null);this.scheduleSave();this.render()});
