@@ -10,6 +10,7 @@ COPY --chown=pwuser:pwuser frontend /app/frontend
 RUN mkdir -p /app/data /tmp/algen-pam-browser-profiles && chown -R pwuser:pwuser /app/data /tmp/algen-pam-browser-profiles
 
 WORKDIR /app/backend
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 USER pwuser
 EXPOSE 8080
 
