@@ -63,7 +63,7 @@ LOCAL_AUTH_MODE=database
   ADMIN_PASSWORD=""; ADMIN_PASSWORD_SUPPLIED=0; ADMIN_PASSWORD_GENERATED=0
   DRY_RUN=1
   prepare_admin_defaults
-  [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
+  [[ "$LOCAL_AUTH_MODE" == os && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]
 ) 2>/dev/null
 
 # Interactive execution uses a visible 3-2-1 countdown without another prompt.

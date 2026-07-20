@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 try:
@@ -10,6 +11,9 @@ from sqlalchemy.orm import Session as DBSession
 from app.config import settings
 from app.models import User
 from app.security import hash_password, verify_password
+
+
+logger = logging.getLogger(__name__)
 
 
 class LocalAuthenticationBackendError(RuntimeError):
@@ -35,7 +39,16 @@ def authenticate_os_account(username: str, password: str) -> bool:
     try:
         import pam
         authenticator = pam.pam()
-        return bool(authenticator.authenticate(username, password, service=settings.pam_os_pam_service))
+        authenticated = bool(authenticator.authenticate(username, password, service=settings.pam_os_pam_service))
+        if not authenticated:
+            logger.warning(
+                "Linux PAM rejected user=%s service=%s code=%s reason=%s",
+                username,
+                settings.pam_os_pam_service,
+                getattr(authenticator, "code", "unknown"),
+                getattr(authenticator, "reason", "unknown"),
+            )
+        return authenticated
     except Exception as exc:
         raise LocalAuthenticationBackendError(f"PAM authentication call failed: {type(exc).__name__}: {exc}") from exc
 

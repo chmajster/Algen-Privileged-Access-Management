@@ -54,7 +54,7 @@ KEEP_DATA=0
 KEEP_LOGS=0
 
 CONFIG_DIR=""; CONFIG_FILE=""; DATA_DIR=""; LOG_DIR=""; LOG_FILE=""
-BIN_PATH=""; SERVICE_FILE=""; DESKTOP_FILE=""; SYSTEMD_USER=0
+BIN_PATH=""; SERVICE_FILE=""; DESKTOP_FILE=""; PAM_SERVICE_FILE=""; SYSTEMD_USER=0
 TARGET_USER=""; TARGET_HOME=""; TARGET_GROUP=""
 STAGE_ROOT=""; STAGED_APP=""; RELEASE_BACKUP=""; DIAGNOSTIC_PATH=""
 STATE_BACKUP_DIR=""
@@ -257,11 +257,11 @@ resolve_paths() {
   if [[ "$SCOPE" == system ]]; then
     INSTALL_DIR="${INSTALL_DIR:-/opt/algen-pam}"
     CONFIG_DIR=/etc/algen-pam; LOG_DIR=/var/log/algen-pam; BIN_PATH=/usr/local/bin/algen-pam
-    SERVICE_FILE=/etc/systemd/system/algen-pam.service; DESKTOP_FILE=/usr/local/share/applications/algen-pam.desktop; SYSTEMD_USER=0
+    SERVICE_FILE=/etc/systemd/system/algen-pam.service; DESKTOP_FILE=/usr/local/share/applications/algen-pam.desktop; PAM_SERVICE_FILE=/etc/pam.d/algen-pam; SYSTEMD_USER=0
   else
     INSTALL_DIR="${INSTALL_DIR:-$TARGET_HOME/.local/share/algen-pam}"
     CONFIG_DIR="$TARGET_HOME/.config/algen-pam"; LOG_DIR="$TARGET_HOME/.local/state/algen-pam/logs"; BIN_PATH="$TARGET_HOME/.local/bin/algen-pam"
-    SERVICE_FILE="$TARGET_HOME/.config/systemd/user/algen-pam.service"; DESKTOP_FILE="$TARGET_HOME/.local/share/applications/algen-pam.desktop"; SYSTEMD_USER=1
+    SERVICE_FILE="$TARGET_HOME/.config/systemd/user/algen-pam.service"; DESKTOP_FILE="$TARGET_HOME/.local/share/applications/algen-pam.desktop"; PAM_SERVICE_FILE=""; SYSTEMD_USER=1
   fi
   [[ "$INSTALL_DIR" == /* ]] || die "Installation path must be absolute after expansion: $INSTALL_DIR"
   [[ "$INSTALL_DIR" != / && "$INSTALL_DIR" != /etc && "$INSTALL_DIR" != /usr && "$INSTALL_DIR" != /var && "$INSTALL_DIR" != "$TARGET_HOME" ]] || die "Unsafe installation path: $INSTALL_DIR"
