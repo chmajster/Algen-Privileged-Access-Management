@@ -480,15 +480,10 @@ interactive_install_prompts() {
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(prompt_value "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(prompt_value "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
   local auth_default=1
-  [[ "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]] && auth_default=2
   printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
   choice="$(read_from_tty "Tryb uwierzytelniania [$auth_default]: ")" || die "Operacja anulowana."
   choice="${choice:-$auth_default}"
   case "$choice" in 1) LOCAL_AUTH_MODE=os;; 2) LOCAL_AUTH_MODE=database;; *) die "Nieprawidłowy tryb uwierzytelniania.";; esac
-  if [[ "$LOCAL_AUTH_MODE" == os && "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]]; then
-    warn "Linux PAM nie może weryfikować kont systemowych z usługi algen-pam. Używam trybu bazy danych."
-    LOCAL_AUTH_MODE=database
-  fi
   [[ "$ADMIN_USER_EXPLICIT" -eq 1 ]] || ADMIN_USER="$(prompt_value "Algen PAM" "Nazwa administratora" "${ADMIN_USER:-$(default_admin_username)}")" || die "Operacja anulowana."
   [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL="$(prompt_value "Algen PAM" "Adres e-mail administratora" "${ADMIN_EMAIL:-${ADMIN_USER}@localhost.localdomain}")" || die "Operacja anulowana."
   if [[ "$LOCAL_AUTH_MODE" == database && "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]]; then
@@ -637,6 +632,7 @@ prepare_config() {
   set_env_value "$editor" PAM_DEFAULT_ADMIN_USER "$ADMIN_USER"
   set_env_value "$editor" PAM_DEFAULT_ADMIN_EMAIL "$ADMIN_EMAIL"
   set_env_value "$editor" PAM_OS_ADMIN_USERS "$ADMIN_USER"
+  set_env_value "$editor" PAM_OS_PAM_SERVICE "$([[ "$SCOPE" == system ]] && printf algen-pam || printf login)"
   set_env_value "$editor" ALGEN_PAM_HOST "$APP_HOST"
   set_env_value "$editor" ALGEN_PAM_PORT "$APP_PORT"
   set_env_value "$editor" PAM_GATEWAY_PORT "$GATEWAY_PORT"
@@ -710,8 +706,23 @@ write_launcher() {
 write_service() {
   [[ "$SERVICE_CHOICE" -eq 1 ]] || return 0
   command -v systemctl >/dev/null || die "systemctl is unavailable; use --no-service."
-  local tmp="$STAGE_ROOT/algen-pam.service" user_line="" wanted=default.target protect_home=read-only
-  if [[ "$SYSTEMD_USER" -eq 0 ]]; then user_line="User=$TARGET_USER"; wanted=multi-user.target; protect_home=true; fi
+  local tmp="$STAGE_ROOT/algen-pam.service" user_line="" supplementary_groups="" wanted=default.target protect_home=read-only
+  if [[ "$SYSTEMD_USER" -eq 0 ]]; then
+    user_line="User=$TARGET_USER"
+    wanted=multi-user.target
+    protect_home=true
+    # pam_unix needs access to protected hashes when a daemon verifies local
+    # accounts. Grant the standard shadow group without running the app as root.
+    getent group shadow >/dev/null 2>&1 || die "System group 'shadow' is required for Linux PAM authentication."
+    supplementary_groups="SupplementaryGroups=shadow"
+    local pam_tmp="$STAGE_ROOT/algen-pam.pam"
+    cat >"$pam_tmp" <<'EOF'
+#%PAM-1.0
+auth required pam_unix.so
+account required pam_unix.so
+EOF
+    target_cmd install -m 0644 "$pam_tmp" "$PAM_SERVICE_FILE"
+  fi
   cat >"$tmp" <<EOF
 [Unit]
 Description=$APP_TITLE
@@ -721,6 +732,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 $user_line
+$supplementary_groups
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$CONFIG_FILE
 ExecStart=$INSTALL_DIR/backend/.venv/bin/python -m uvicorn app.main:app --host $APP_HOST --port $APP_PORT
@@ -947,12 +959,6 @@ full_uninstall() {
 
 # ---- main operation flow ---------------------------------------------------
 prepare_admin_defaults() {
-  if [[ "$LOCAL_AUTH_MODE" == os && "$SCOPE" == system && "$TARGET_USER" == algen-pam && "$SERVICE_CHOICE" -eq 1 ]]; then
-    LOCAL_AUTH_MODE=database
-    [[ -n "$ADMIN_USER" ]] || ADMIN_USER=algen-pam
-    [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 1 ]] || ADMIN_PASSWORD_GENERATED=1
-    warn "Usługa algen-pam nie może bezpiecznie weryfikować haseł pam_unix. Przełączono uwierzytelnianie na bazę danych."
-  fi
   [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(default_admin_username)"
   [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"
   [[ "$LOCAL_AUTH_MODE" != os || "$DRY_RUN" -eq 1 || ( "$SCOPE" == system && "$ADMIN_USER" == algen-pam ) ]] \
