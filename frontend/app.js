@@ -933,7 +933,7 @@ function renderSettings() {
 function render() {
   renderNav();
   setTitle();
-  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
+  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit };
   (views[state.view] || renderDashboard)();
 }
 
