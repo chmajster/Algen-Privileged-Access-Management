@@ -33,9 +33,10 @@ password authentication with a vault secret, then presents an authentication-fre
 RFB handshake only inside the already authenticated, session-bound PAM WebSocket.
 The target TCP port and password are never disclosed. TLS/VeNCrypt is deliberately
 fail-closed until implemented; VNC is disabled by default and non-TLS VNC must be
-limited to an isolated target network. The current web distribution does not
-bundle noVNC, so deployments enabling VNC must bundle a compatible client in the
-PAM UI.
+limited to an isolated target network. The current web distribution loads a
+pinned noVNC ES module; air-gapped and high-assurance deployments should vendor
+that module with the PAM static assets and enforce a matching Content Security
+Policy.
 
 ## Lifecycle and storage
 
