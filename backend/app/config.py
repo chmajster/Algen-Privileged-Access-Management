@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     pam_registration_rate_limit_count: int = 10
     pam_registration_rate_limit_window_minutes: int = 60
     pam_registration_known_hosts_path: str = "/data/registration_known_hosts"
-    pam_artifact_dir: str = "/data/pam-artifacts"
+    pam_artifact_dir: str = "/app/data/pam-artifacts"
     pam_browser_profile_dir: str = "/tmp/algen-pam-browser-profiles"
     pam_browser_headless: bool = True
     pam_browser_concurrency: int = 8
@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     pam_web_absolute_timeout_seconds: int = 28800
     pam_websocket_token_ttl_seconds: int = 60
     pam_vnc_enabled: bool = False
+    pam_cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=readable_env_file(DEFAULT_ENV_FILE), extra="ignore")
 

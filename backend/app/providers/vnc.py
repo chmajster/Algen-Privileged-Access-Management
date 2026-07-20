@@ -45,6 +45,8 @@ class VNCProvider:
         profile = self.profile(context)
         if not profile.hostname or not 1 <= profile.port <= 65535:
             raise ValueError("Invalid VNC target")
+        if profile.tls_required:
+            raise ValueError("VNC TLS/VeNCrypt is not implemented; isolate the target network or keep VNC disabled")
 
     async def _connect(self, context: ProviderContext) -> VncRuntime:
         profile = self.profile(context)

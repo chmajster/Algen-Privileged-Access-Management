@@ -61,8 +61,8 @@ async def bind_audit_request_context(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[item.strip() for item in settings.pam_cors_origins.split(",") if item.strip()],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
