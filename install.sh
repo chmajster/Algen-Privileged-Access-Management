@@ -697,6 +697,7 @@ build_staged_release() {
   info "Building and validating the staged release."
   run python3 -m venv --copies "$STAGED_APP/backend/.venv"
   run "$STAGED_APP/backend/.venv/bin/python" -m pip install --disable-pip-version-check -r "$STAGED_APP/backend/requirements.txt"
+  export PLAYWRIGHT_BROWSERS_PATH="$STAGED_APP/backend/playwright-browsers"
   run "$STAGED_APP/backend/.venv/bin/playwright" install chromium
   (cd "$STAGED_APP/backend" && DATABASE_URL=sqlite:///:memory: PAM_LOCAL_AUTH_MODE=database "$STAGED_APP/backend/.venv/bin/python" -c 'import app.main; import app.bootstrap_admin') \
     || die "Staged backend import validation failed."
@@ -747,6 +748,7 @@ $user_line
 $supplementary_groups
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$CONFIG_FILE
+Environment=PLAYWRIGHT_BROWSERS_PATH=$INSTALL_DIR/backend/playwright-browsers
 ExecStart=$INSTALL_DIR/backend/.venv/bin/python -m uvicorn app.main:app --host $APP_HOST --port $APP_PORT
 Restart=on-failure
 RestartSec=5
