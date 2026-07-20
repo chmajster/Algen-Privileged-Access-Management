@@ -780,7 +780,26 @@ validate_ports() {
   fi
   done
 }
-wait_health() { local _; for _ in {1..30}; do curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" | grep -q '"message":"ok"' && return 0; sleep 1; done; return 1; }
+wait_health() { local _; for _ in {1..30}; do curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" 2>/dev/null | grep -q '"message":"ok"' && return 0; sleep 1; done; return 1; }
+wait_service_health() {
+  local attempt
+  for attempt in {1..30}; do
+    curl -fsS --max-time 2 "http://127.0.0.1:$APP_PORT/api/health" 2>/dev/null | grep -q '"message":"ok"' && return 0
+    if (( attempt >= 2 )) && ! service_is_active; then return 1; fi
+    sleep 1
+  done
+  return 1
+}
+print_service_diagnostics() {
+  printf '\nDiagnostyka usługi systemd:\n' >&2
+  if [[ "$SYSTEMD_USER" -eq 1 ]]; then
+    systemctl --user status algen-pam.service --no-pager -l >&2 || true
+    journalctl --user -u algen-pam.service -n 80 --no-pager >&2 || true
+  else
+    systemctl status algen-pam.service --no-pager -l >&2 || true
+    journalctl -u algen-pam.service -n 80 --no-pager >&2 || true
+  fi
+}
 validate_runtime() {
   [[ "$SERVICE_CHOICE" -eq 1 ]] && return 0
   local v_log="$LOG_DIR/validation.log"
@@ -978,19 +997,23 @@ execute_install_or_update() {
   fi
   if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
     section "Uruchamianie usługi"
-    systemctl_do enable --now algen-pam.service || { rollback_release; die "Service start failed; rollback completed."; }
+    systemctl_do enable --now algen-pam.service || { print_service_diagnostics; rollback_release; die "Service start failed; rollback completed."; }
   fi
   debug "Previous service state: active=$SERVICE_WAS_ACTIVE enabled=$SERVICE_WAS_ENABLED"
   local valid=0
   section "Walidacja aplikacji"
   if [[ "$SERVICE_CHOICE" -eq 1 ]]; then
-    service_is_active && wait_health && valid=1
+    wait_service_health && valid=1
   else
     if port_in_use "$APP_PORT"; then warn "Cannot run validation: port $APP_PORT is occupied by another process."
     elif validate_runtime; then valid=1
     fi
   fi
-  if [[ "$valid" -ne 1 ]]; then rollback_release; die "New release failed validation; rollback completed."; fi
+  if [[ "$valid" -ne 1 ]]; then
+    [[ "$SERVICE_CHOICE" -eq 0 ]] || print_service_diagnostics
+    rollback_release
+    die "New release failed validation; rollback completed."
+  fi
   [[ -z "$RELEASE_BACKUP" || ! -d "$RELEASE_BACKUP" ]] || target_cmd rm -rf -- "$RELEASE_BACKUP"
 }
 first_host_ipv4() {
