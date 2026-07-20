@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import AccessWizardDraft, User, utcnow
+from app.models import AccessWizardDraft, AccessWizardSubmission, User, utcnow
 from app.rbac import has_permission
 from app.wizard_schemas import (
     ConnectionTestIn,
@@ -175,6 +175,9 @@ def _all_step_errors(draft: AccessWizardDraft, data: dict[str, Any]) -> list[dic
 
 @router.post("/complete")
 async def complete(payload: WizardComplete, user: User = Depends(get_current_user), db: DBSession = Depends(get_db)):
+    previous = db.query(AccessWizardSubmission).filter_by(user_id=user.id, submission_key=payload.submission_key).first()
+    if previous:
+        return {**json.loads(previous.result_json), "duplicate": True}
     item = _owned_draft(db, user, payload.draft_id)
     _authorize_mode(db, user, item.mode)
     data = json.loads(item.data_json)

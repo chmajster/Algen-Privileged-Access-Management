@@ -4,19 +4,18 @@ import hashlib
 import json
 import re
 import socket
-from datetime import timedelta
+from datetime import datetime
 from io import StringIO
 from typing import Any
 from urllib.parse import urlsplit,urlunsplit
 
 import paramiko
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from app.audit import write_audit
 from app.models import (AccessAssignment,AccessPolicy,AccessProfile,AccessRequest,
                         AccessWizardDraft,AccessWizardSubmission,ConnectionProfile,
-                        Resource,SSHConnectionProfile,Secret,User,WebConnectionProfile,utcnow)
+                        Resource,SSHConnectionProfile,Secret,User,WebConnectionProfile)
 from app.providers.web import web_provider
 from app.providers.web_security import NavigationGuard,UnsafeNavigation
 from app.vault import get_vault_backend_for_secret
@@ -88,7 +87,7 @@ def validate_step(mode:str,resource_type:str|None,step:int,data:dict[str,Any])->
         connection=data.get("connection",{}); auth=connection.get("authentication_type","none")
         if resource_type=="ssh" and auth in {"password","private_key"} and not (connection.get("secret_ref_id") or connection.get("secret_input_key")): errors.append({"field":"connection.secret_ref_id","message":"Select or create an authentication secret"})
         if resource_type=="web" and auth=="form": required(connection,["username_selector","password_selector","submit_selector"],"connection")
-    elif step==5 and mode!="request_access": required(data.get("access_profile",{}),["name","access_option"],"access_profile")
+    elif step==5 and mode!="request_access" and not data.get("access_profile_id"): required(data.get("access_profile",{}),["name","access_option"],"access_profile")
     elif step==6 and mode!="request_access":
         policy=data.get("policy",{}); criticality=data.get("resource",{}).get("criticality")
         disabled=[name for name in ("require_approval","require_mfa","require_recording") if criticality in {"high","critical"} and policy.get(name) is False]
@@ -282,16 +281,24 @@ def complete_transaction(db:DBSession,user:User,draft:AccessWizardDraft,inputs:d
                 resource.allowed_domains=",".join(allowed)
             db.add(typed)
         else:
-            resource=db.get(Resource,int(data["resource_id"]));
+            resource=db.get(Resource,int(data["resource_id"]))
             if not resource: raise ValueError("Selected resource no longer exists")
-        profile_data=data["access_profile"]; policy_data=apply_security_defaults(data.get("resource",{"criticality":resource.criticality}),data.get("policy",{}))
-        profile=AccessProfile(name=profile_data["name"],resource_type=resource.resource_type,resource_group_id=resource.group_id,environment=resource.environment,criticality=resource.criticality,access_option=profile_data.get("access_option","standard"),max_session_duration_minutes=int(policy_data["maximum_duration_minutes"]),approval_required=bool(policy_data["require_approval"]),mfa_required=bool(policy_data["require_mfa"]),recording_required=bool(policy_data["require_recording"]),allowed_schedule_json=json.dumps({"weekdays":[int(x) for x in str(policy_data.get("allowed_weekdays","0,1,2,3,4,5,6")).split(",")],"time_ranges":policy_data.get("allowed_time_ranges",[])}),upload_policy="allow" if policy_data["allow_uploads"] else "deny",download_policy="allow" if policy_data["allow_downloads"] else "deny",clipboard_policy=policy_data["clipboard_policy"])
-        db.add(profile); db.flush(); policy=AccessPolicy(access_profile_id=profile.id,require_approval=policy_data["require_approval"],approval_mode=policy_data.get("approval_mode","any_approver"),approval_group=policy_data.get("approval_group"),approval_stages_json=json.dumps(policy_data.get("approval_stages",[])),approval_expiration_minutes=int(policy_data.get("approval_expiration_minutes",1440)),require_mfa=policy_data["require_mfa"],require_recording=policy_data["require_recording"],record_events=policy_data["record_events"],capture_screenshots=policy_data["capture_screenshots"],idle_timeout_minutes=int(policy_data["idle_timeout_minutes"]),default_duration_minutes=int(policy_data["default_duration_minutes"]),maximum_duration_minutes=int(policy_data["maximum_duration_minutes"]),allow_downloads=policy_data["allow_downloads"],allow_uploads=policy_data["allow_uploads"],clipboard_policy=policy_data["clipboard_policy"],allowed_weekdays=str(policy_data.get("allowed_weekdays","0,1,2,3,4,5,6")),allowed_time_ranges_json=json.dumps(policy_data.get("allowed_time_ranges",[])),scheduled_access=bool(policy_data.get("scheduled_access",False)),control_override_justification=policy_data.get("control_override_justification")); db.add(policy)
+        policy_data=apply_security_defaults(data.get("resource",{"criticality":resource.criticality}),data.get("policy",{}))
+        profile=db.get(AccessProfile,int(data["access_profile_id"])) if mode=="assign_existing_resource" and data.get("access_profile_id") else None
+        if profile:
+            if profile.resource_type and profile.resource_type!=resource.resource_type: raise ValueError("The selected access profile does not support this resource type")
+            policy=db.query(AccessPolicy).filter_by(access_profile_id=profile.id).first()
+        else:
+            profile_data=data["access_profile"]
+            profile=AccessProfile(name=profile_data["name"],resource_type=resource.resource_type,resource_group_id=resource.group_id,environment=resource.environment,criticality=resource.criticality,access_option=profile_data.get("access_option","standard"),max_session_duration_minutes=int(policy_data["maximum_duration_minutes"]),approval_required=bool(policy_data["require_approval"]),mfa_required=bool(policy_data["require_mfa"]),recording_required=bool(policy_data["require_recording"]),allowed_schedule_json=json.dumps({"weekdays":[int(x) for x in str(policy_data.get("allowed_weekdays","0,1,2,3,4,5,6")).split(",")],"time_ranges":policy_data.get("allowed_time_ranges",[])}),upload_policy="allow" if policy_data["allow_uploads"] else "deny",download_policy="allow" if policy_data["allow_downloads"] else "deny",clipboard_policy=policy_data["clipboard_policy"])
+            db.add(profile); db.flush(); policy=AccessPolicy(access_profile_id=profile.id,require_approval=policy_data["require_approval"],approval_mode=policy_data.get("approval_mode","any_approver"),approval_group=policy_data.get("approval_group"),approval_stages_json=json.dumps(policy_data.get("approval_stages",[])),approval_expiration_minutes=int(policy_data.get("approval_expiration_minutes",1440)),require_mfa=policy_data["require_mfa"],require_recording=policy_data["require_recording"],record_events=policy_data["record_events"],capture_screenshots=policy_data["capture_screenshots"],idle_timeout_minutes=int(policy_data["idle_timeout_minutes"]),default_duration_minutes=int(policy_data["default_duration_minutes"]),maximum_duration_minutes=int(policy_data["maximum_duration_minutes"]),allow_downloads=policy_data["allow_downloads"],allow_uploads=policy_data["allow_uploads"],clipboard_policy=policy_data["clipboard_policy"],allowed_weekdays=str(policy_data.get("allowed_weekdays","0,1,2,3,4,5,6")),allowed_time_ranges_json=json.dumps(policy_data.get("allowed_time_ranges",[])),scheduled_access=bool(policy_data.get("scheduled_access",False)),control_override_justification=policy_data.get("control_override_justification")); db.add(policy)
         assignments=[]
         for item in data.get("assignments",[]):
-            assignment=AccessAssignment(resource_id=resource.id,access_profile_id=profile.id,subject_type=item["subject_type"],subject_identifier=str(item["subject_identifier"]),assignment_mode=item.get("assignment_mode","request_required"),expires_at=item.get("expires_at")); db.add(assignment); assignments.append(assignment)
-        db.flush(); result={"mode":mode,"resource_id":resource.id,"connection_profile_id":generic.id if mode=="create_resource" else None,"access_profile_id":profile.id,"access_policy_id":policy.id,"assignment_ids":[item.id for item in assignments]}
-        write_audit(db,"access_wizard.complete",f"Created access configuration for {resource.name}",user_id=user.id,resource_id=resource.id,object_type="access_profile",object_id=profile.id,metadata={"mode":mode,"policy_summary":policy_summary(resource,policy,data.get("assignments",[])),"control_override_justification":policy.control_override_justification})
+            expires_at=item.get("expires_at")
+            if isinstance(expires_at,str): expires_at=datetime.fromisoformat(expires_at.replace("Z","+00:00"))
+            assignment=AccessAssignment(resource_id=resource.id,access_profile_id=profile.id,subject_type=item["subject_type"],subject_identifier=str(item["subject_identifier"]),assignment_mode=item.get("assignment_mode","request_required"),expires_at=expires_at); db.add(assignment); assignments.append(assignment)
+        db.flush(); result={"mode":mode,"resource_id":resource.id,"connection_profile_id":generic.id if mode=="create_resource" else None,"access_profile_id":profile.id,"access_policy_id":policy.id if policy else None,"assignment_ids":[item.id for item in assignments]}
+        write_audit(db,"access_wizard.complete",f"Created access configuration for {resource.name}",user_id=user.id,resource_id=resource.id,object_type="access_profile",object_id=profile.id,metadata={"mode":mode,"policy_summary":policy_summary(resource,policy,data.get("assignments",[])) if policy else "Existing access profile assigned","control_override_justification":policy.control_override_justification if policy else None})
     _before_commit_hook(); submission=AccessWizardSubmission(user_id=user.id,submission_key=submission_key,result_json=json.dumps(result)); db.add(submission); db.delete(draft); db.commit(); return {**result,"duplicate":False}
 
 
