@@ -11,8 +11,8 @@ readonly INSTALLER_VERSION="2.0.0"
 readonly DEFAULT_REPO="https://github.com/chmajster/Algen-Privileged-Access-Management"
 readonly DEFAULT_BRANCH="main"
 readonly REQUIRED_PYTHON_MINOR=12
-readonly EXISTING_ACTION_TIMEOUT=5
-readonly START_COUNTDOWN_SECONDS=3
+readonly EXISTING_ACTION_TIMEOUT=1
+readonly START_COUNTDOWN_SECONDS=0
 
 MODE=""                       # install|update|reinstall|backup|remove-app|uninstall
 MODE_EXPLICIT=0
