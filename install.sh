@@ -928,6 +928,7 @@ remove_integrations() {
   service_is_active && systemctl_do stop algen-pam.service || true
   if [[ -f "$SERVICE_FILE" ]]; then systemctl_do disable algen-pam.service 2>/dev/null || true; target_cmd rm -f "$SERVICE_FILE"; systemctl_do daemon-reload || true; fi
   target_cmd rm -f "$BIN_PATH" "$DESKTOP_FILE"
+  [[ -z "$PAM_SERVICE_FILE" ]] || target_cmd rm -f "$PAM_SERVICE_FILE"
 }
 remove_app_only() {
   safe_target
