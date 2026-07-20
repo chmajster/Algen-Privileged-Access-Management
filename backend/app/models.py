@@ -1,12 +1,9 @@
-<<<<<<< HEAD
 """Database model for the protocol-independent PAM schema (version 3).
 
 Protocol credentials and connection options deliberately live in the typed
 connection-profile tables.  Grants and sessions only describe authorization
 and lifecycle state.
 """
-=======
->>>>>>> parent of 0a6886e (WOW WTF)
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
@@ -187,6 +184,9 @@ class Server(Base, TimestampMixin):
     registration_connection_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     host_key_policy: Mapped[str] = mapped_column(String(32), default="strict")
     expected_host_key_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    protocol: Mapped[str] = mapped_column(String(32), default="ssh", index=True)
+    allowed_domains: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allow_private_network: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class AccessRequest(Base, TimestampMixin):
@@ -311,11 +311,82 @@ class Session(Base, TimestampMixin):
     idle_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_session_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     termination_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    protocol: Mapped[str] = mapped_column(String(32), default="ssh", index=True)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    authentication_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    absolute_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     user: Mapped[User] = relationship("User")
     server: Mapped[Server] = relationship("Server")
     grant: Mapped[AccessGrant] = relationship("AccessGrant")
     commands: Mapped[list["SessionCommand"]] = relationship("SessionCommand", back_populates="session")
+
+
+class WebConnectionProfile(Base, TimestampMixin):
+    __tablename__ = "web_connection_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), unique=True, index=True)
+    initial_url: Mapped[str] = mapped_column(Text)
+    authentication_mode: Mapped[str] = mapped_column(String(32), default="none")
+    username_secret_id: Mapped[int | None] = mapped_column(ForeignKey("secrets.id"), nullable=True)
+    password_secret_id: Mapped[int | None] = mapped_column(ForeignKey("secrets.id"), nullable=True)
+    auth_secret_id: Mapped[int | None] = mapped_column(ForeignKey("secrets.id"), nullable=True)
+    username_selector: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    password_selector: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    submit_selector: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    success_url_pattern: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    success_dom_selector: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    header_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cookie_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    blocked_domains: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_policy: Mapped[str] = mapped_column(String(32), default="deny")
+    download_policy: Mapped[str] = mapped_column(String(32), default="deny")
+    clipboard_policy: Mapped[str] = mapped_column(String(32), default="deny")
+    popup_policy: Mapped[str] = mapped_column(String(32), default="same_origin")
+    max_upload_bytes: Mapped[int] = mapped_column(Integer, default=10_485_760)
+    max_download_bytes: Mapped[int] = mapped_column(Integer, default=52_428_800)
+
+    server: Mapped[Server] = relationship("Server")
+
+
+class VncConnectionProfile(Base, TimestampMixin):
+    __tablename__ = "vnc_connection_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), unique=True, index=True)
+    hostname: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=5900)
+    secret_id: Mapped[int | None] = mapped_column(ForeignKey("secrets.id"), nullable=True)
+    tls_required: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class SessionEvent(Base):
+    __tablename__ = "session_events"
+    __table_args__ = (UniqueConstraint("session_id", "sequence_number", name="uq_session_event_sequence"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    sequence_number: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SessionArtifact(Base):
+    __tablename__ = "session_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(32), index=True)
+    storage_path: Mapped[str] = mapped_column(String(1024))
+    sha256: Mapped[str] = mapped_column(String(64))
+    mime_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class SessionCommand(Base):

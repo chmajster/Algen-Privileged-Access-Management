@@ -120,6 +120,9 @@ def _ensure_legacy_columns() -> None:
                 "registration_connection_status": "VARCHAR(32)",
                 "host_key_policy": "VARCHAR(32) DEFAULT 'strict' NOT NULL",
                 "expected_host_key_fingerprint": "VARCHAR(128)",
+                "protocol": "VARCHAR(32) DEFAULT 'ssh' NOT NULL",
+                "allowed_domains": "TEXT",
+                "allow_private_network": "BOOLEAN DEFAULT 0 NOT NULL",
             },
         )
         add_missing(
@@ -187,6 +190,11 @@ def _ensure_legacy_columns() -> None:
                 "idle_timeout_seconds": "INTEGER",
                 "max_session_seconds": "INTEGER",
                 "termination_reason": "VARCHAR(128)",
+                "protocol": "VARCHAR(32) DEFAULT 'ssh' NOT NULL",
+                "last_heartbeat_at": "DATETIME",
+                "authentication_expires_at": "DATETIME",
+                "absolute_timeout_seconds": "INTEGER",
+                "worker_id": "VARCHAR(128)",
             },
         )
         add_missing(
