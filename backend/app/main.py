@@ -17,7 +17,7 @@ from app.identity.local_provider import LocalAuthenticationBackendError, validat
 from app.models import User
 from app.protocol_lifecycle import start_protocol_lifecycle, stop_protocol_lifecycle
 from app.providers.web import web_provider
-from app.routes import access_grants, access_groups, access_requests, access_wizard, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
+from app.routes import access_grants, access_groups, access_requests, alerts, audit_logs, auth, gateway, identity, mfa, policies, policy_rules, protocol_sessions, risk_events, secret_rotation, secrets, server_registrations, server_templates, servers, sessions, users
 from app.scheduler import start_scheduler, stop_scheduler, tick
 from app.seed import seed_demo_data
 
@@ -87,7 +87,6 @@ app.include_router(secret_rotation.router)
 app.include_router(policy_rules.router)
 app.include_router(risk_events.router)
 app.include_router(alerts.router)
-app.include_router(access_wizard.router)
 app.include_router(protocol_sessions.router)
 
 
