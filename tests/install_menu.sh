@@ -72,6 +72,16 @@ load_existing_configuration
 [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
 rm -f -- "$legacy_config"
 
+legacy_config="$(mktemp)"
+CONFIG_FILE="$legacy_config"; ADMIN_USER=""; ADMIN_EMAIL=""; ADMIN_PASSWORD_GENERATED=0
+printf '%s\n' \
+  'PAM_DEFAULT_ADMIN_USER=algen-pam' \
+  'PAM_DEFAULT_ADMIN_EMAIL=algen-pam@localhost.localdomain' \
+  'PAM_LOCAL_AUTH_MODE=database' >"$legacy_config"
+load_existing_configuration
+[[ "$ADMIN_USER" == administrator && "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
+rm -f -- "$legacy_config"
+
 (
   LOCAL_AUTH_MODE=os; SCOPE=system; TARGET_USER=algen-pam; SERVICE_CHOICE=1
   ADMIN_USER=administrator; ADMIN_EMAIL=administrator@localhost.localdomain

@@ -580,7 +580,7 @@ load_existing_configuration() {
   value="$(configured_value PAM_LOCAL_AUTH_MODE || true)"; [[ -z "$value" ]] || LOCAL_AUTH_MODE="$value"
   configured_admin="$(configured_value PAM_DEFAULT_ADMIN_USER || true)"
   configured_email="$(configured_value PAM_DEFAULT_ADMIN_EMAIL || true)"
-  if [[ "$ADMIN_USER_EXPLICIT" -eq 0 && "$configured_admin" == root ]]; then
+  if [[ "$ADMIN_USER_EXPLICIT" -eq 0 && ( "$configured_admin" == root || "$configured_admin" == algen-pam ) ]]; then
     ADMIN_USER=administrator
     [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL=administrator@localhost.localdomain
     if [[ "$MODE" == update || "$MODE" == reinstall ]]; then ADMIN_PASSWORD_GENERATED=1; fi
