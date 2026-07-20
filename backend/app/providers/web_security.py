@@ -62,7 +62,7 @@ class NavigationGuard:
         parsed = urlsplit(normalized)
         host = parsed.hostname or ""
         if not self._domain_allowed(host):
-            raise UnsafeNavigation("Destination domain is not allowed")
+            raise UnsafeNavigation(f"Destination domain is not allowed. Host: {host}, Allowed: {self.allowed_domains}")
         addresses = await self.resolve(host, parsed.port or (443 if parsed.scheme == "https" else 80))
         if not addresses:
             raise UnsafeNavigation("Destination did not resolve")
