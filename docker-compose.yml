@@ -1,35 +1,17 @@
 services:
-  pam:
+  pam-lite:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    env_file: [.env]
-    ports: ["8080:8080"]
-    init: true
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: sqlite:////data/db/pam.db
-      PAM_ARTIFACT_DIR: /data/artifacts
-      PAM_BROWSER_PROFILE_DIR: /data/browser-profiles
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
     volumes:
-      - pam_database:/data/db
-      - pam_artifacts:/data/artifacts
-      - pam_logs:/data/logs
-    healthcheck:
-      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8080/api/health')); assert d['message']=='ok' and d['browser_worker']=='healthy'"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 2G
-        reservations:
-          memory: 512M
+      - pam_lite_data:/app/data
+      - ./frontend:/app/frontend:ro
+    environment:
+      DATABASE_URL: sqlite:////app/data/pam_lite.db
 
 volumes:
-  pam_database:
-  pam_artifacts:
-  pam_logs:
+  pam_lite_data:

@@ -13,7 +13,7 @@ from app.identity.oidc_provider import authenticate_oidc_callback, oidc_login_ur
 from app.identity.local_provider import LocalAuthenticationBackendError
 from app.identity.providers import authenticate_with_provider
 from app.mfa.challenge import create_challenge, write_auth_event
-from app.models import PamSession, User, utcnow
+from app.models import User, utcnow
 from app.security import create_access_token
 
 
@@ -75,10 +75,7 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
 
 
 @router.post("/logout", response_model=schemas.Message)
-async def logout(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    from app.routes.domain import terminate
-    for session in db.query(PamSession).filter_by(user_id=current_user.id, status="active").all():
-        await terminate(db, session, "user_logout", current_user)
+def logout(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     write_auth_event(db, "logout", user=current_user, success=True, source_ip=source_ip(request), user_agent=request.headers.get("user-agent"), message="Logout")
     write_audit(db, "auth.logout", f"{current_user.username} logged out", user_id=current_user.id, source_ip=source_ip(request))
     db.commit()
