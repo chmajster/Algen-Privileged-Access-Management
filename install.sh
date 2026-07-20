@@ -48,7 +48,7 @@ ADMIN_PASSWORD_SUPPLIED=0
 ADMIN_PASSWORD_INTERNAL=0
 ADMIN_USER_EXPLICIT=0
 ADMIN_EMAIL_EXPLICIT=0
-LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-os}"
+LOCAL_AUTH_MODE="${PAM_LOCAL_AUTH_MODE:-database}"
 KEEP_CONFIG=0
 KEEP_DATA=0
 KEEP_LOGS=0
@@ -448,13 +448,13 @@ default_admin_username() {
   if [[ "$LOCAL_AUTH_MODE" == os ]]; then
     if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]] && id "$SUDO_USER" >/dev/null 2>&1; then
       printf '%s' "$SUDO_USER"
-    elif [[ "$TARGET_USER" != algen-pam ]] && id "$TARGET_USER" >/dev/null 2>&1; then
+    elif [[ "$TARGET_USER" != algen-pam && "$TARGET_USER" != root ]] && id "$TARGET_USER" >/dev/null 2>&1; then
       printf '%s' "$TARGET_USER"
     else
-      printf root
+      printf administrator
     fi
   else
-    printf '%s' "$TARGET_USER"
+    printf administrator
   fi
 }
 interactive_install_prompts() {
@@ -479,7 +479,7 @@ interactive_install_prompts() {
   if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 0 ]]; then prompt_yes_no "Utworzyć skrót desktopowy?" no && DESKTOP_CHOICE=1 || DESKTOP_CHOICE=0; fi
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then APP_PORT="$(prompt_value "Algen PAM" "Port HTTP" "$APP_PORT")" || die "Operacja anulowana."; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then GATEWAY_PORT="$(prompt_value "Algen PAM" "Port SSH Gateway" "$GATEWAY_PORT")" || die "Operacja anulowana."; fi
-  local auth_default=1
+  local auth_default=2
   printf '%s\n' '1) Linux PAM / konto systemowe' '2) Baza danych aplikacji' >/dev/tty
   choice="$(read_from_tty "Tryb uwierzytelniania [$auth_default]: ")" || die "Operacja anulowana."
   choice="${choice:-$auth_default}"
@@ -574,11 +574,20 @@ configured_value() {
 }
 load_existing_configuration() {
   [[ -f "$CONFIG_FILE" ]] || return 0
-  local value
+  local value configured_admin configured_email
   if [[ "$APP_PORT_EXPLICIT" -eq 0 ]]; then value="$(configured_value ALGEN_PAM_PORT || true)"; [[ -z "$value" ]] || APP_PORT="$value"; fi
   if [[ "$GATEWAY_PORT_EXPLICIT" -eq 0 ]]; then value="$(configured_value PAM_GATEWAY_PORT || true)"; [[ -z "$value" ]] || GATEWAY_PORT="$value"; fi
-  [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(configured_value PAM_DEFAULT_ADMIN_USER || true)"
-  [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$(configured_value PAM_DEFAULT_ADMIN_EMAIL || true)"
+  value="$(configured_value PAM_LOCAL_AUTH_MODE || true)"; [[ -z "$value" ]] || LOCAL_AUTH_MODE="$value"
+  configured_admin="$(configured_value PAM_DEFAULT_ADMIN_USER || true)"
+  configured_email="$(configured_value PAM_DEFAULT_ADMIN_EMAIL || true)"
+  if [[ "$ADMIN_USER_EXPLICIT" -eq 0 && "$configured_admin" == root ]]; then
+    ADMIN_USER=administrator
+    [[ "$ADMIN_EMAIL_EXPLICIT" -eq 1 ]] || ADMIN_EMAIL=administrator@localhost.localdomain
+    if [[ "$MODE" == update || "$MODE" == reinstall ]]; then ADMIN_PASSWORD_GENERATED=1; fi
+  else
+    [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$configured_admin"
+    [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$configured_email"
+  fi
 }
 set_env_value() {
   local file="$1" key="$2" value="$3" tmp escaped
@@ -962,8 +971,6 @@ full_uninstall() {
 prepare_admin_defaults() {
   [[ -n "$ADMIN_USER" ]] || ADMIN_USER="$(default_admin_username)"
   [[ -n "$ADMIN_EMAIL" ]] || ADMIN_EMAIL="$ADMIN_USER@localhost.localdomain"
-  [[ "$LOCAL_AUTH_MODE" != os || "$DRY_RUN" -eq 1 || ( "$SCOPE" == system && "$ADMIN_USER" == algen-pam ) ]] \
-    || id "$ADMIN_USER" >/dev/null 2>&1 || die "OS administrator account '$ADMIN_USER' does not exist."
 }
 prepare_admin_password() {
   [[ "$MODE" == install || "$MODE" == reinstall || "$ADMIN_PASSWORD_SUPPLIED" -eq 1 || "$ADMIN_PASSWORD_GENERATED" -eq 1 ]] || return 0

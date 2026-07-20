@@ -47,8 +47,8 @@ def ensure_admin_user(db: Session, username: str, email: str, password: str, upd
 
 def parser() -> argparse.ArgumentParser:
     item = argparse.ArgumentParser(description="Create or update the first local admin account.")
-    item.add_argument("--username", default=os.getenv("PAM_DEFAULT_ADMIN_USER", "admin"))
-    item.add_argument("--email", default=os.getenv("PAM_DEFAULT_ADMIN_EMAIL", "admin@example.local"))
+    item.add_argument("--username", default=os.getenv("PAM_DEFAULT_ADMIN_USER", "administrator"))
+    item.add_argument("--email", default=os.getenv("PAM_DEFAULT_ADMIN_EMAIL", "administrator@localhost.localdomain"))
     item.add_argument("--password", default=os.getenv("PAM_DEFAULT_ADMIN_PASSWORD"))
     item.add_argument("--update-password", action="store_true")
     return item

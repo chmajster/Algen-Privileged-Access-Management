@@ -52,13 +52,29 @@ fi
 # default PAM administrator.
 unset SUDO_USER
 LOCAL_AUTH_MODE=os; TARGET_USER=algen-pam
-[[ "$(default_admin_username)" == root ]]
+[[ "$(default_admin_username)" == administrator ]]
 LOCAL_AUTH_MODE=database
-[[ "$(default_admin_username)" == algen-pam ]]
+[[ "$(default_admin_username)" == administrator ]]
+
+# Legacy defaults named root are migrated to an application-only administrator
+# account. This never invokes passwd or changes the operating-system root user.
+legacy_config="$(mktemp)"
+CONFIG_FILE="$legacy_config"; SCOPE=user; MODE=update
+ADMIN_USER=""; ADMIN_EMAIL=""; ADMIN_USER_EXPLICIT=0; ADMIN_EMAIL_EXPLICIT=0
+ADMIN_PASSWORD_GENERATED=0
+printf '%s\n' \
+  'PAM_DEFAULT_ADMIN_USER=root' \
+  'PAM_DEFAULT_ADMIN_EMAIL=root@localhost.localdomain' \
+  'PAM_LOCAL_AUTH_MODE=database' >"$legacy_config"
+load_existing_configuration
+[[ "$ADMIN_USER" == administrator ]]
+[[ "$ADMIN_EMAIL" == administrator@localhost.localdomain ]]
+[[ "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]
+rm -f -- "$legacy_config"
 
 (
   LOCAL_AUTH_MODE=os; SCOPE=system; TARGET_USER=algen-pam; SERVICE_CHOICE=1
-  ADMIN_USER=algen-pam; ADMIN_EMAIL=algen-pam@localhost.localdomain
+  ADMIN_USER=administrator; ADMIN_EMAIL=administrator@localhost.localdomain
   ADMIN_USER_EXPLICIT=0; ADMIN_EMAIL_EXPLICIT=0
   ADMIN_PASSWORD=""; ADMIN_PASSWORD_SUPPLIED=0; ADMIN_PASSWORD_GENERATED=0
   DRY_RUN=1

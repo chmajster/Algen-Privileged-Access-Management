@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: int = 60
     pam_session_log_import_enabled: bool = True
     pam_session_log_dir: str = "/var/log/pam-lite"
-    pam_default_admin_user: str = "root"
-    pam_default_admin_email: str = "root@localhost.localdomain"
+    pam_default_admin_user: str = "administrator"
+    pam_default_admin_email: str = "administrator@localhost.localdomain"
     pam_default_admin_password: str = "admin123"
     pam_access_mode: str = "direct"
     pam_group_scoped_access: bool = True
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     pam_medium_risk_score: int = 30
     pam_auth_providers: str = "local_os,local_db,ldap,oidc"
     pam_default_auth_provider: str = "local_db"
-    pam_local_auth_mode: str = "os"
+    pam_local_auth_mode: str = "database"
     pam_os_pam_service: str = "login"
     pam_os_admin_users: str = "root"
     pam_os_auto_provision: bool = True
