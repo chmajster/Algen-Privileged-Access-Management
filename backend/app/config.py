@@ -4,6 +4,19 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def readable_env_file(path: Path) -> Path | None:
+    """Use dotenv for manual launches, but trust systemd's EnvironmentFile when sandboxed."""
+    try:
+        with path.open("rb"):
+            pass
+    except OSError:
+        return None
+    return path
+
+
+DEFAULT_ENV_FILE = Path(__file__).parents[2] / ".env"
+
+
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./pam_lite.db"
     secret_key: str = "change-me"
@@ -91,7 +104,7 @@ class Settings(BaseSettings):
     pam_registration_rate_limit_window_minutes: int = 60
     pam_registration_known_hosts_path: str = "/data/registration_known_hosts"
 
-    model_config = SettingsConfigDict(env_file=Path(__file__).parents[2] / ".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=readable_env_file(DEFAULT_ENV_FILE), extra="ignore")
 
 
 @lru_cache

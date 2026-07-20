@@ -99,6 +99,7 @@ grep -q 'ExecStart=.*/bin/python -m uvicorn ' "$SERVICE_FILE"
 grep -q '^NoNewPrivileges=true$' "$SERVICE_FILE"
 grep -q '^ProtectSystem=strict$' "$SERVICE_FILE"
 grep -q '^UMask=0077$' "$SERVICE_FILE"
+grep -q "^EnvironmentFile=$CONFIG_FILE$" "$SERVICE_FILE"
 
 if command -v systemd-analyze >/dev/null 2>&1; then
   systemd-analyze verify "$SERVICE_FILE"
