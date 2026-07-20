@@ -223,7 +223,15 @@ def _ensure_legacy_columns() -> None:
                 "risk_score": "INTEGER DEFAULT 0 NOT NULL",
                 "risk_severity": "VARCHAR(32) DEFAULT 'low' NOT NULL",
                 "matched_policy_rule_id": "INTEGER",
+                "matched_policy_id": "INTEGER",
                 "blocked_by_policy": "BOOLEAN DEFAULT 0 NOT NULL",
+            },
+        )
+        add_missing(
+            conn,
+            "risk_events",
+            {
+                "matched_policy_id": "INTEGER",
             },
         )
         add_missing(
