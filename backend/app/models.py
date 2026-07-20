@@ -21,6 +21,14 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class Environment(Base, TimestampMixin):
+    __tablename__ = "environments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 

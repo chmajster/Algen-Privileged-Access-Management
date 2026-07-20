@@ -793,23 +793,35 @@ async function savePolicyInst() {
     return;
   }
 
-  if (id) {
-    await api(`/api/policies/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-    toast("Rule updated");
-  } else {
-    await api("/api/policies", { method: "POST", body: JSON.stringify(payload) });
-    toast("Rule created");
+  try {
+    if (id) {
+      await api(`/api/policies/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      toast("Rule updated", "success");
+    } else {
+      await api("/api/policies", { method: "POST", body: JSON.stringify(payload) });
+      toast("Rule created", "success");
+    }
+    selectedPolicyInst = null;
+    await refresh();
+  } catch (err) {
+    if (!await handleStepUpError(err, savePolicyInst)) {
+      toast(err.message, "danger");
+    }
   }
-  selectedPolicyInst = null;
-  await refresh();
 }
 
 async function deletePolicyInst(id) {
   if (!confirm("Delete this rule?")) return;
-  await api(`/api/policies/${id}`, { method: "DELETE" });
-  toast("Rule deleted");
-  selectedPolicyInst = null;
-  await refresh();
+  try {
+    await api(`/api/policies/${id}`, { method: "DELETE" });
+    toast("Rule deleted", "success");
+    selectedPolicyInst = null;
+    await refresh();
+  } catch (err) {
+    if (!await handleStepUpError(err, () => deletePolicyInst(id))) {
+      toast(err.message, "danger");
+    }
+  }
 }
 function renderRiskEvents() {
   $("#content").innerHTML = `
