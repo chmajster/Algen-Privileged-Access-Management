@@ -420,6 +420,53 @@ function renderSessions() {
   $("#exportSessions").onclick = () => downloadCsv("/api/sessions/export.csv", "sessions.csv");
 }
 
+function renderLiveSession() {
+  const live = state.liveSession;
+  if (!live) { state.view = "grants"; return render(); }
+  $("#content").innerHTML = `<div class="toolbar"><button class="btn btn-outline-secondary" data-action="close-live"><i class="bi bi-arrow-left"></i> Back</button><strong>${escapeHtml(live.protocol.toUpperCase())} session #${live.session_id}</strong><button class="btn btn-danger ms-auto" data-action="terminate-live" data-id="${live.session_id}">Terminate</button></div><div id="controlledViewer" class="controlled-viewer" tabindex="0"><img id="controlledFrame" alt="Server-side controlled browser"></div><p class="small text-secondary mt-2">Credentials and browser storage remain in the PAM worker. Input is sent through the session-bound channel.</p>`;
+  if (live.protocol === "web") connectWebViewer(live);
+  else $("#controlledViewer").innerHTML = `<div class="alert alert-info">VNC transport is ready at the authenticated PAM WebSocket. This deployment must bundle a compatible noVNC client to render it.</div>`;
+}
+
+function connectWebViewer(live) {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${scheme}://${location.host}${live.stream_url}?token=${encodeURIComponent(live.stream_token)}`);
+  live.socket = socket;
+  const frame = $("#controlledFrame");
+  socket.onmessage = (message) => {
+    const payload = JSON.parse(message.data);
+    if (payload.type === "frame") frame.src = `data:image/jpeg;base64,${payload.data}`;
+  };
+  const point = (event) => {
+    const rect = frame.getBoundingClientRect();
+    return {x:(event.clientX-rect.left)*1440/rect.width,y:(event.clientY-rect.top)*900/rect.height};
+  };
+  frame.addEventListener("click", (event) => socket.readyState === 1 && socket.send(JSON.stringify({type:"mouse",action:"click",...point(event)})));
+  $("#controlledViewer").addEventListener("keydown", (event) => { event.preventDefault(); if (socket.readyState === 1) socket.send(JSON.stringify({type:"key",action:"down",key:event.key})); });
+  $("#controlledViewer").addEventListener("keyup", (event) => { event.preventDefault(); if (socket.readyState === 1) socket.send(JSON.stringify({type:"key",action:"up",key:event.key})); });
+  $("#controlledViewer").addEventListener("wheel", (event) => { event.preventDefault(); if (socket.readyState === 1) socket.send(JSON.stringify({type:"wheel",delta_x:event.deltaX,delta_y:event.deltaY})); }, {passive:false});
+  live.heartbeat = setInterval(() => api(`/api/sessions/${live.session_id}/heartbeat`, {method:"POST"}).catch(() => clearInterval(live.heartbeat)), 30000);
+  $("#controlledViewer").focus();
+}
+
+async function authenticatedBlobUrl(path) {
+  const response = await fetch(path, {headers:{Authorization:`Bearer ${state.token}`}});
+  if (!response.ok) throw new Error(`Playback failed: HTTP ${response.status}`);
+  return URL.createObjectURL(await response.blob());
+}
+
+async function renderReplay() {
+  const replay = state.selectedReplay;
+  if (!replay) { state.view = "sessions"; return render(); }
+  const types = [...new Set(replay.events.map((event) => event.event_type))];
+  const video = replay.artifacts.find((item) => item.artifact_type === "video");
+  $("#content").innerHTML = `<div class="toolbar"><button class="btn btn-outline-secondary" data-action="back-sessions"><i class="bi bi-arrow-left"></i> Sessions</button><strong>Replay #${replay.session.id}</strong><button class="btn btn-danger ms-auto ${replay.session.status === "active" ? "" : "d-none"}" data-action="terminate-replay" data-id="${replay.session.id}">Terminate</button></div><div class="row g-3"><div class="col-lg-8"><video id="replayVideo" class="w-100 bg-black" controls></video><div class="replay-meta mt-2">User: ${escapeHtml(replay.user.username)} · Resource: ${escapeHtml(replay.resource.hostname)} · Grant #${replay.grant.id} · Request #${replay.request.id}</div></div><div class="col-lg-4"><select id="replayFilter" class="form-select mb-2"><option value="">All events</option>${types.map((type) => `<option>${escapeHtml(type)}</option>`).join("")}</select><div id="replayTimeline" class="replay-timeline"></div></div></div>`;
+  const draw = () => { const filter = $("#replayFilter").value; $("#replayTimeline").innerHTML = replay.events.filter((event) => !filter || event.event_type === filter).map((event) => `<button class="replay-event" data-offset="${Math.max(0,(new Date(event.timestamp)-new Date(replay.session.started_at))/1000)}"><strong>${escapeHtml(event.event_type)}</strong><small>${fmt(event.timestamp)}</small><span>${escapeHtml(JSON.stringify(event.metadata))}</span></button>`).join(""); };
+  $("#replayFilter").onchange = draw; draw();
+  $("#replayTimeline").onclick = (event) => { const row = event.target.closest(".replay-event"); if (row && video) $("#replayVideo").currentTime = Number(row.dataset.offset); };
+  if (video) $("#replayVideo").src = await authenticatedBlobUrl(`/api/sessions/${replay.session.id}/artifacts/${video.id}/play`);
+}
+
 function renderCommands(commands = state.data.commands) {
   $("#content").innerHTML = `
     <div class="toolbar">
@@ -728,7 +775,7 @@ function renderSettings() {
 function render() {
   renderNav();
   setTitle();
-  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
+  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, policyRules: renderPolicyRules, policyTest: renderPolicyTest, serverGroups: renderServerGroups, riskEvents: renderRiskEvents, alerts: renderAlerts, mfaSettings: renderMfaSettings, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit, settings: renderSettings };
   (views[state.view] || renderDashboard)();
 }
 
@@ -1121,6 +1168,21 @@ document.body.addEventListener("click", async (event) => {
     if (action === "reject-request") await api(`/api/access-requests/${id}/reject`, { method: "POST", body: JSON.stringify({ approver_comment: "Rejected from UI" }) });
     if (action === "import-grant-logs") await api(`/api/access-grants/${id}/import-logs`, { method: "POST" });
     if (action === "revoke-grant") await api(`/api/access-grants/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason: "Revoked from UI" }) });
+    if (action === "launch-session") {
+      state.liveSession = await api(`/api/access-grants/${id}/launch-session`, {method:"POST"});
+      state.view = "liveSession"; render(); return;
+    }
+    if (action === "close-live") {
+      if (state.liveSession?.socket) state.liveSession.socket.close();
+      if (state.liveSession?.heartbeat) clearInterval(state.liveSession.heartbeat);
+      state.liveSession = null; state.view = "grants"; render(); return;
+    }
+    if (action === "terminate-live") {
+      await api(`/api/sessions/${id}/terminate`, {method:"POST"});
+      if (state.liveSession?.socket) state.liveSession.socket.close();
+      if (state.liveSession?.heartbeat) clearInterval(state.liveSession.heartbeat);
+      state.liveSession = null; await refresh(); state.view = "sessions"; render(); return;
+    }
     if (action === "view-session") {
       state.selectedSession = await api(`/api/sessions/${id}`);
       const commands = await api(`/api/sessions/${id}/commands`);
@@ -1135,6 +1197,15 @@ document.body.addEventListener("click", async (event) => {
       state.view = "sessions";
       render();
       return;
+    }
+    if (action === "replay-session") {
+      state.selectedReplay = await api(`/api/sessions/${id}/replay`);
+      state.view = "replay"; render(); return;
+    }
+    if (action === "terminate-replay") {
+      await api(`/api/sessions/${id}/terminate`, {method:"POST"});
+      state.selectedReplay = await api(`/api/sessions/${id}/replay`);
+      render(); return;
     }
     if (action === "recording") {
       const result = await api(`/api/sessions/${id}/recording`);

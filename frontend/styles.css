@@ -227,6 +227,14 @@ body {
   font-size: .82rem;
 }
 
+.controlled-viewer { min-height: 520px; background:#05070b; display:flex; align-items:center; justify-content:center; overflow:hidden; outline:2px solid transparent; }
+.controlled-viewer:focus { outline-color:var(--bs-primary); }
+.controlled-viewer img { max-width:100%; max-height:75vh; user-select:none; }
+.replay-timeline { max-height:65vh; overflow:auto; display:grid; gap:.5rem; }
+.replay-event { display:grid; width:100%; text-align:left; border:1px solid var(--bs-border-color); border-radius:.5rem; background:var(--bs-body-bg); color:var(--bs-body-color); padding:.6rem; }
+.replay-event small { color:var(--ink-muted); }
+.replay-event span { overflow-wrap:anywhere; font-family:ui-monospace,monospace; font-size:.78rem; }
+
 [data-bs-theme="dark"] {
   --surface-soft: #111827;
   --ink-muted: #9ca3af;
