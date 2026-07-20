@@ -12,7 +12,7 @@ from app.audit import reset_audit_user_agent, set_audit_user_agent
 from app.database import SessionLocal, init_db
 from app.lifecycle import start_lifecycle_monitor, stop_lifecycle_monitor
 from app.providers.web import web_provider
-from app.routes import auth, domain, identity, mfa, secrets
+from app.routes import access_wizard, auth, domain, identity, mfa, secrets
 from app.seed import seed_demo_data
 
 
@@ -25,7 +25,7 @@ async def lifespan(_:FastAPI):
     await stop_lifecycle_monitor(); await web_provider.shutdown()
 
 
-app=FastAPI(title="Algen Multi-Protocol PAM",version="2.0.0",lifespan=lifespan)
+app=FastAPI(title="Algen Multi-Protocol PAM",version="3.0.0",lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -45,11 +45,11 @@ async def audit_context(request:Request,call_next):
 
 
 app.add_middleware(CORSMiddleware,allow_origins=[],allow_credentials=True,allow_methods=["GET","POST","PUT","DELETE"],allow_headers=["Authorization","Content-Type"])
-for route in (auth.router,mfa.router,identity.router,secrets.router,domain.router): app.include_router(route)
+for route in (auth.router,mfa.router,identity.router,secrets.router,domain.router,access_wizard.router): app.include_router(route)
 
 
 @app.get("/api/health")
-def health(): return {"message":"ok","schema":2,"browser_worker":"healthy" if web_provider.healthy() else "unhealthy","active_browser_sessions":len(web_provider.runtimes)}
+def health(): return {"message":"ok","schema":3,"browser_worker":"healthy" if web_provider.healthy() else "unhealthy","active_browser_sessions":len(web_provider.runtimes)}
 
 
 FRONTEND_DIR=Path(__file__).parents[2]/"frontend"

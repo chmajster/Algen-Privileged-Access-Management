@@ -1,4 +1,4 @@
-"""Database model for the protocol-independent PAM schema (version 2).
+"""Database model for the protocol-independent PAM schema (version 3).
 
 Protocol credentials and connection options deliberately live in the typed
 connection-profile tables.  Grants and sessions only describe authorization

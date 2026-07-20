@@ -2,7 +2,7 @@ import asyncio
 from datetime import timezone
 
 from app.database import SessionLocal
-from app.models import AccessGrant, PamSession, utcnow
+from app.models import AccessGrant, AccessWizardDraft, PamSession, utcnow
 from app.routes.domain import terminate
 
 
@@ -16,6 +16,7 @@ def aware(value):
 async def enforce_lifecycle_once() -> None:
     db=SessionLocal(); now=utcnow()
     try:
+        db.query(AccessWizardDraft).filter(AccessWizardDraft.expires_at <= now).delete(synchronize_session=False)
         for session in db.query(PamSession).filter_by(status="active").all():
             grant=db.get(AccessGrant,session.grant_id); reason=None
             if not grant or grant.status!="active": reason="grant_revoked"
