@@ -425,7 +425,22 @@ function renderLiveSession() {
   if (!live) { state.view = "grants"; return render(); }
   $("#content").innerHTML = `<div class="toolbar"><button class="btn btn-outline-secondary" data-action="close-live"><i class="bi bi-arrow-left"></i> Back</button><strong>${escapeHtml(live.protocol.toUpperCase())} session #${live.session_id}</strong><button class="btn btn-danger ms-auto" data-action="terminate-live" data-id="${live.session_id}">Terminate</button></div><div id="controlledViewer" class="controlled-viewer" tabindex="0"><img id="controlledFrame" alt="Server-side controlled browser"></div><p class="small text-secondary mt-2">Credentials and browser storage remain in the PAM worker. Input is sent through the session-bound channel.</p>`;
   if (live.protocol === "web") connectWebViewer(live);
-  else $("#controlledViewer").innerHTML = `<div class="alert alert-info">VNC transport is ready at the authenticated PAM WebSocket. This deployment must bundle a compatible noVNC client to render it.</div>`;
+  else connectVncViewer(live);
+}
+
+async function connectVncViewer(live) {
+  const stage = $("#controlledViewer");
+  stage.innerHTML = "";
+  try {
+    const {default:RFB} = await import("https://cdn.jsdelivr.net/npm/@novnc/novnc@1.5.0/+esm");
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    live.rfb = new RFB(stage, `${scheme}://${location.host}${live.stream_url}?token=${encodeURIComponent(live.stream_token)}`, {shared:false, credentials:{password:""}});
+    live.rfb.scaleViewport = true;
+    live.rfb.resizeSession = false;
+    live.heartbeat = setInterval(() => api(`/api/sessions/${live.session_id}/heartbeat`, {method:"POST"}).catch(() => clearInterval(live.heartbeat)), 30000);
+  } catch (error) {
+    stage.innerHTML = `<div class="alert alert-danger">Unable to load the VNC viewer: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function connectWebViewer(live) {
@@ -1174,12 +1189,14 @@ document.body.addEventListener("click", async (event) => {
     }
     if (action === "close-live") {
       if (state.liveSession?.socket) state.liveSession.socket.close();
+      if (state.liveSession?.rfb) state.liveSession.rfb.disconnect();
       if (state.liveSession?.heartbeat) clearInterval(state.liveSession.heartbeat);
       state.liveSession = null; state.view = "grants"; render(); return;
     }
     if (action === "terminate-live") {
       await api(`/api/sessions/${id}/terminate`, {method:"POST"});
       if (state.liveSession?.socket) state.liveSession.socket.close();
+      if (state.liveSession?.rfb) state.liveSession.rfb.disconnect();
       if (state.liveSession?.heartbeat) clearInterval(state.liveSession.heartbeat);
       state.liveSession = null; await refresh(); state.view = "sessions"; render(); return;
     }
