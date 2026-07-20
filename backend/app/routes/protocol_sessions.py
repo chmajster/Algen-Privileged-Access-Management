@@ -58,6 +58,10 @@ class WebProfileIn(BaseModel):
     download_policy: Literal["deny", "allow"] = "deny"
     clipboard_policy: Literal["deny", "read", "write", "read_write"] = "deny"
     popup_policy: Literal["deny", "same_origin", "allow"] = "same_origin"
+    allow_subdomains: bool = True
+    login_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    idle_timeout_seconds: int = Field(default=900, ge=30, le=86400)
+    maximum_session_duration_minutes: int = Field(default=60, ge=1, le=1440)
     max_upload_bytes: int = Field(default=10_485_760, ge=0, le=1_073_741_824)
     max_download_bytes: int = Field(default=52_428_800, ge=0, le=1_073_741_824)
 
@@ -80,7 +84,8 @@ async def put_web_profile(server_id: int, payload: WebProfileIn, user: User = De
     if not server: raise HTTPException(404, "Server not found")
     require_permission(db, user, "servers.edit", server_id=server_id, conceal=True)
     profile = db.query(WebConnectionProfile).filter_by(server_id=server_id).first() or WebConnectionProfile(server_id=server_id)
-    for key, value in payload.model_dump().items(): setattr(profile, key, value)
+    values = payload.model_dump(); server.allow_subdomains = values.pop("allow_subdomains")
+    for key, value in values.items(): setattr(profile, key, value)
     server.protocol = "web"
     db.add(profile)
     await web_provider.validate_configuration(ProviderContext(db, server))
@@ -136,7 +141,10 @@ async def launch(grant_id: int, request: Request, token: str = Depends(oauth2_sc
     claims = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
     auth_expiry = datetime.fromtimestamp(claims["exp"], timezone.utc)
     now = utcnow()
-    session = Session(user_id=user.id, server_id=server.id, grant_id=grant.id, linux_username=grant.linux_username, source_ip=source_ip(request), started_at=now, status="active", protocol=protocol, target_host=server.hostname, recording_enabled=True, last_heartbeat_at=now, authentication_expires_at=auth_expiry, idle_timeout_seconds=settings.pam_web_idle_timeout_seconds, absolute_timeout_seconds=settings.pam_web_absolute_timeout_seconds, max_session_seconds=settings.pam_web_absolute_timeout_seconds)
+    web_profile = db.query(WebConnectionProfile).filter_by(server_id=server.id).first() if protocol == "web" else None
+    idle_timeout = web_profile.idle_timeout_seconds if web_profile else settings.pam_web_idle_timeout_seconds
+    absolute_timeout = web_profile.maximum_session_duration_minutes * 60 if web_profile else settings.pam_web_absolute_timeout_seconds
+    session = Session(user_id=user.id, server_id=server.id, grant_id=grant.id, linux_username=grant.linux_username, source_ip=source_ip(request), started_at=now, status="active", protocol=protocol, target_host=server.hostname, recording_enabled=True, last_heartbeat_at=now, authentication_expires_at=auth_expiry, idle_timeout_seconds=idle_timeout, absolute_timeout_seconds=absolute_timeout, max_session_seconds=absolute_timeout)
     db.add(session); db.flush()
     try:
         result = await provider_for(protocol).launch_session(ProviderContext(db, server, grant, session))

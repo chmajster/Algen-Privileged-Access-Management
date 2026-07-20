@@ -187,6 +187,7 @@ class Server(Base, TimestampMixin):
     protocol: Mapped[str] = mapped_column(String(32), default="ssh", index=True)
     allowed_domains: Mapped[str | None] = mapped_column(Text, nullable=True)
     allow_private_network: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_subdomains: Mapped[bool] = mapped_column(Boolean, default=True)
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
     connection_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
 
@@ -372,6 +373,9 @@ class WebConnectionProfile(Base, TimestampMixin):
     popup_policy: Mapped[str] = mapped_column(String(32), default="same_origin")
     max_upload_bytes: Mapped[int] = mapped_column(Integer, default=10_485_760)
     max_download_bytes: Mapped[int] = mapped_column(Integer, default=52_428_800)
+    login_timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    idle_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    maximum_session_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
 
     server: Mapped[Server] = relationship("Server")
 

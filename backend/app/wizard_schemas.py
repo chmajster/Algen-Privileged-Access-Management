@@ -45,6 +45,7 @@ class WebDiscoveryIn(BaseModel):
     allowed_domains:list[str]=Field(default_factory=list)
     blocked_domains:list[str]=Field(default_factory=list)
     allow_private_network:bool=False
+    allow_subdomains:bool=True
 
 
 class WizardComplete(BaseModel):

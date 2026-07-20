@@ -3,6 +3,9 @@
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS protocol VARCHAR(32) NOT NULL DEFAULT 'ssh';
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS allowed_domains TEXT;
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS allow_private_network BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS allow_subdomains BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS tags TEXT;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS connection_timeout_seconds INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS protocol VARCHAR(32) NOT NULL DEFAULT 'ssh';
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS authentication_expires_at TIMESTAMPTZ;
@@ -37,3 +40,17 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
 );
 CREATE INDEX IF NOT EXISTS ix_session_events_session ON session_events(session_id);
 CREATE INDEX IF NOT EXISTS ix_session_artifacts_session ON session_artifacts(session_id);
+ALTER TABLE web_connection_profiles ADD COLUMN IF NOT EXISTS login_timeout_seconds INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE web_connection_profiles ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER NOT NULL DEFAULT 900;
+ALTER TABLE web_connection_profiles ADD COLUMN IF NOT EXISTS maximum_session_duration_minutes INTEGER NOT NULL DEFAULT 60;
+CREATE TABLE IF NOT EXISTS access_wizard_drafts (
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), mode VARCHAR(32) NOT NULL,
+  resource_type VARCHAR(32), data_json TEXT NOT NULL DEFAULT '{}', completed_steps_json TEXT NOT NULL DEFAULT '[]',
+  expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS access_wizard_submissions (
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), submission_key VARCHAR(64) NOT NULL,
+  result_json TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, submission_key)
+);

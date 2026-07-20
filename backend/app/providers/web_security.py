@@ -37,16 +37,17 @@ def normalize_url(url: str) -> str:
 
 
 class NavigationGuard:
-    def __init__(self, allowed_domains: list[str], allow_private_network: bool = False, blocked_domains: list[str] | None = None):
+    def __init__(self, allowed_domains: list[str], allow_private_network: bool = False, blocked_domains: list[str] | None = None, allow_subdomains: bool = True):
         self.allowed_domains = tuple(item.strip().lower().rstrip(".") for item in allowed_domains if item.strip())
         self.blocked_domains = tuple(item.strip().lower().rstrip(".") for item in (blocked_domains or []) if item.strip())
         self.allow_private_network = allow_private_network
+        self.allow_subdomains = allow_subdomains
         self.resolutions: dict[str, frozenset[str]] = {}
 
     def _domain_allowed(self, host: str) -> bool:
         if any(host == item or host.endswith("." + item) for item in self.blocked_domains):
             return False
-        return not self.allowed_domains or any(host == item or host.endswith("." + item) for item in self.allowed_domains)
+        return not self.allowed_domains or any(host == item or (self.allow_subdomains and host.endswith("." + item)) for item in self.allowed_domains)
 
     async def resolve(self, host: str, port: int) -> set[str]:
         try:

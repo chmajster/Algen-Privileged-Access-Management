@@ -123,6 +123,7 @@ def _ensure_legacy_columns() -> None:
                 "protocol": "VARCHAR(32) DEFAULT 'ssh' NOT NULL",
                 "allowed_domains": "TEXT",
                 "allow_private_network": "BOOLEAN DEFAULT 0 NOT NULL",
+                "allow_subdomains": "BOOLEAN DEFAULT 1 NOT NULL",
                 "tags": "TEXT",
                 "connection_timeout_seconds": "INTEGER DEFAULT 10 NOT NULL",
             },
@@ -197,6 +198,15 @@ def _ensure_legacy_columns() -> None:
                 "authentication_expires_at": "DATETIME",
                 "absolute_timeout_seconds": "INTEGER",
                 "worker_id": "VARCHAR(128)",
+            },
+        )
+        add_missing(
+            conn,
+            "web_connection_profiles",
+            {
+                "login_timeout_seconds": "INTEGER DEFAULT 30 NOT NULL",
+                "idle_timeout_seconds": "INTEGER DEFAULT 900 NOT NULL",
+                "maximum_session_duration_minutes": "INTEGER DEFAULT 60 NOT NULL",
             },
         )
         add_missing(

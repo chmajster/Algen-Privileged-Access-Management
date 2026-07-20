@@ -67,7 +67,7 @@ class WebAccessProvider:
         return self.browser
 
     def guard(self, context: ProviderContext, profile: WebConnectionProfile) -> NavigationGuard:
-        return NavigationGuard((context.resource.allowed_domains or "").split(","), context.resource.allow_private_network, (profile.blocked_domains or "").split(","))
+        return NavigationGuard((context.resource.allowed_domains or "").split(","), context.resource.allow_private_network, (profile.blocked_domains or "").split(","), context.resource.allow_subdomains)
 
     async def validate_configuration(self, context: ProviderContext) -> None:
         profile = self.profile(context)
