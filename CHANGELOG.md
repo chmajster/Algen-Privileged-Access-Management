@@ -44,6 +44,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Fixed
 
+- Removed a duplicated HTML document that left a second login screen visible behind authenticated modals.
 - Session expiry and logout now close the active entity modal and remove its backdrop before showing the login screen.
 - MFA login failures are counted until the complete authentication flow succeeds.
 - Session duration calculation handles SQLite timestamps that lost timezone metadata.
