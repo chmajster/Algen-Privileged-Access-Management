@@ -21,15 +21,20 @@ def _request_form_config(db: Session) -> dict:
     raw = resolve_effective_policies(db).get("request.form_schema", {})
     raw = raw if isinstance(raw, dict) else {}
     config = {**DEFAULT_REQUEST_FORM_SCHEMA, **raw}
-    access_types = [item for item in config.get("access_types", []) if item in {"ssh_only", "limited_sudo", "full_sudo"}]
-    durations = sorted({int(item) for item in config.get("durations", []) if str(item).isdigit() and 1 <= int(item) <= 10080})
+    access_type_values = config.get("access_types", [])
+    access_type_values = access_type_values if isinstance(access_type_values, list) else []
+    duration_values = config.get("durations", [])
+    duration_values = duration_values if isinstance(duration_values, list) else []
+    access_types = [item for item in access_type_values if item in {"ssh_only", "limited_sudo", "full_sudo"}]
+    durations = sorted({int(item) for item in duration_values if str(item).isdigit() and 1 <= int(item) <= 10080})
     config["access_types"] = access_types or DEFAULT_REQUEST_FORM_SCHEMA["access_types"]
     config["durations"] = durations or DEFAULT_REQUEST_FORM_SCHEMA["durations"]
     for key in ("title", "server_label", "access_type_label", "duration_label", "reason_label", "submit_label", "default_reason", "warning"):
         value = config.get(key)
         config[key] = str(value)[:2000] if value is not None else ""
     for key in ("show_access_type", "show_duration", "show_reason"):
-        config[key] = bool(config.get(key, True))
+        value = config.get(key, True)
+        config[key] = value if isinstance(value, bool) else str(value).lower() in {"1", "true", "yes", "on"}
     return config
 
 

@@ -1,3 +1,5 @@
+import json
+
 from app.database import SessionLocal
 from app.models import MfaChallenge, PamPolicy, StepUpSession, User
 
@@ -47,3 +49,35 @@ def test_policy_create_and_update_persist(client):
     assert updated.status_code == 200, updated.text
     assert updated.json()["value_json"] == '"10.20.30.41"'
     assert updated.json()["scope"] == "resource"
+
+
+def test_request_connect_form_is_built_and_enforced_from_policy(client):
+    with SessionLocal() as db:
+        policy = db.query(PamPolicy).filter(PamPolicy.policy_id == "request.form_schema").one()
+        policy.status = "enabled"
+        policy.value_json = json.dumps({
+            "title": "Poproś o połączenie",
+            "submit_label": "Wyślij",
+            "access_types": ["ssh_only"],
+            "durations": [30, 60],
+            "show_reason": False,
+            "default_reason": "Request utworzony z formularza polityki",
+            "warning": "Dostęp wymaga akceptacji.",
+        })
+        db.commit()
+
+    headers = auth_headers(client)
+    config = client.get("/api/access-requests/form-config", headers=headers)
+    assert config.status_code == 200, config.text
+    assert config.json()["title"] == "Poproś o połączenie"
+    assert config.json()["access_types"] == ["ssh_only"]
+    assert config.json()["durations"] == [30, 60]
+    assert config.json()["show_reason"] is False
+
+    rejected = client.post(
+        "/api/access-requests",
+        headers=headers,
+        json={"server_id": 1, "reason": "test", "requested_duration_minutes": 15, "requested_access_type": "full_sudo"},
+    )
+    assert rejected.status_code == 400
+    assert "Request connect form policy" in rejected.json()["detail"]

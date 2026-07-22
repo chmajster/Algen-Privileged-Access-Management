@@ -759,6 +759,33 @@ function renderPolicies() {
   `;
 }
 
+function renderPolicyValueEditor(definition, instance) {
+  if (definition.policy_id !== "request.form_schema") {
+    return `<div class="mb-3"><label class="form-label">Value (JSON format)</label><textarea class="form-control font-monospace" id="pol_value_json" rows="3" required>${escapeHtml(instance.value_json || JSON.stringify(definition.default_value))}</textarea><div class="form-text">Type: ${definition.value_type}</div></div>`;
+  }
+  let config = definition.default_value || {};
+  try { config = {...config, ...JSON.parse(instance.value_json || "{}")}; } catch (_error) {}
+  return `<input type="hidden" id="pol_value_json" value="{}">
+    <div class="alert alert-info small">Ten edytor buduje formularz „Request connect”. Typy i czasy są również egzekwowane przez API.</div>
+    <div class="mb-3"><label class="form-label">Tytuł formularza</label><input id="requestFormTitle" class="form-control" value="${escapeHtml(config.title)}"></div>
+    <div class="row g-2 mb-3">
+      <div class="col-6"><label class="form-label">Etykieta serwera</label><input id="requestFormServerLabel" class="form-control" value="${escapeHtml(config.server_label)}"></div>
+      <div class="col-6"><label class="form-label">Etykieta typu</label><input id="requestFormAccessLabel" class="form-control" value="${escapeHtml(config.access_type_label)}"></div>
+      <div class="col-6"><label class="form-label">Etykieta czasu</label><input id="requestFormDurationLabel" class="form-control" value="${escapeHtml(config.duration_label)}"></div>
+      <div class="col-6"><label class="form-label">Etykieta powodu</label><input id="requestFormReasonLabel" class="form-control" value="${escapeHtml(config.reason_label)}"></div>
+    </div>
+    <div class="mb-3"><label class="form-label">Typy dostępu</label><input id="requestFormAccessTypes" class="form-control" value="${escapeHtml((config.access_types || []).join(", "))}"><div class="form-text">Dozwolone: ssh_only, limited_sudo, full_sudo</div></div>
+    <div class="mb-3"><label class="form-label">Czasy w minutach</label><input id="requestFormDurations" class="form-control" value="${escapeHtml((config.durations || []).join(", "))}"></div>
+    <div class="mb-3"><label class="form-label">Domyślny powód</label><textarea id="requestFormDefaultReason" class="form-control" rows="2">${escapeHtml(config.default_reason)}</textarea></div>
+    <div class="mb-3"><label class="form-label">Ostrzeżenie</label><textarea id="requestFormWarning" class="form-control" rows="3">${escapeHtml(config.warning)}</textarea></div>
+    <div class="mb-3"><label class="form-label">Tekst przycisku</label><input id="requestFormSubmitLabel" class="form-control" value="${escapeHtml(config.submit_label)}"></div>
+    <div class="mb-3">
+      <label class="form-check"><input id="requestFormShowAccessType" class="form-check-input" type="checkbox" ${config.show_access_type ? "checked" : ""}><span class="form-check-label">Pokaż typ dostępu</span></label>
+      <label class="form-check"><input id="requestFormShowDuration" class="form-check-input" type="checkbox" ${config.show_duration ? "checked" : ""}><span class="form-check-label">Pokaż czas</span></label>
+      <label class="form-check"><input id="requestFormShowReason" class="form-check-input" type="checkbox" ${config.show_reason ? "checked" : ""}><span class="form-check-label">Pokaż powód</span></label>
+    </div>`;
+}
+
 function renderPolicyDetails(insts) {
   if (!selectedPolicyDef) {
     return `<div class="d-flex h-100 align-items-center justify-content-center text-muted"><div class="text-center"><i class="bi bi-sliders fs-1 mb-3 d-block"></i>Select a policy to view or edit details</div></div>`;
@@ -791,11 +818,7 @@ function renderPolicyDetails(insts) {
               </select>
             </div>
             
-            <div class="mb-3">
-              <label class="form-label">Value (JSON format)</label>
-              <textarea class="form-control font-monospace" id="pol_value_json" rows="3" required>${escapeHtml(i.value_json || JSON.stringify(d.default_value))}</textarea>
-              <div class="form-text">Type: ${d.value_type}</div>
-            </div>
+            ${renderPolicyValueEditor(d, i)}
             
             <div class="mb-3">
               <label class="form-label">Scope Type</label>
@@ -863,12 +886,41 @@ function renderPolicyDetails(insts) {
 
 async function savePolicyInst() {
   const id = $("#pol_id").value;
+  let valueJson = $("#pol_value_json").value;
+  if ($("#pol_policy_id").value === "request.form_schema") {
+    const accessTypes = $("#requestFormAccessTypes").value.split(",").map((value) => value.trim()).filter(Boolean);
+    const durations = $("#requestFormDurations").value.split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0);
+    const invalidAccessTypes = accessTypes.filter((value) => !["ssh_only", "limited_sudo", "full_sudo"].includes(value));
+    if (!accessTypes.length || !durations.length) {
+      toast("Podaj co najmniej jeden typ dostępu i jeden czas", "danger");
+      return;
+    }
+    if (invalidAccessTypes.length) {
+      toast(`Nieprawidłowe typy dostępu: ${invalidAccessTypes.join(", ")}`, "danger");
+      return;
+    }
+    valueJson = JSON.stringify({
+      title: $("#requestFormTitle").value,
+      server_label: $("#requestFormServerLabel").value,
+      access_type_label: $("#requestFormAccessLabel").value,
+      duration_label: $("#requestFormDurationLabel").value,
+      reason_label: $("#requestFormReasonLabel").value,
+      submit_label: $("#requestFormSubmitLabel").value,
+      access_types: accessTypes,
+      durations,
+      show_access_type: $("#requestFormShowAccessType").checked,
+      show_duration: $("#requestFormShowDuration").checked,
+      show_reason: $("#requestFormShowReason").checked,
+      default_reason: $("#requestFormDefaultReason").value,
+      warning: $("#requestFormWarning").value,
+    });
+  }
   const payload = {
     policy_id: $("#pol_policy_id").value,
     category: $("#pol_category") ? $("#pol_category").value : "general",
     name: $("#pol_name") ? $("#pol_name").value : $("#pol_policy_id").value,
     status: $("#pol_status").value,
-    value_json: $("#pol_value_json").value,
+    value_json: valueJson,
     scope: $("#pol_scope_type").value,
     scope_target: $("#pol_scope_target").value || null,
     priority: parseInt($("#pol_priority").value, 10),
