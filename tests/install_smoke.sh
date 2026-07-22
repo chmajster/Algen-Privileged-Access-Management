@@ -18,6 +18,7 @@ bash "$INSTALLER" --help | grep -F -- '--reinstall' >/dev/null
 bash "$INSTALLER" --help | grep -F -- '--remove-app' >/dev/null
 bash "$ROOT_DIR/tests/install_menu.sh"
 bash "$ROOT_DIR/tests/install_deploy.sh"
+bash "$ROOT_DIR/tests/install_version_check.sh"
 
 if grep -Eq 'COLOR_|whiptail|dialog|\\033|\\e\[' "$INSTALLER"; then
   echo 'Installer contains terminal colors or TUI dependencies.' >&2

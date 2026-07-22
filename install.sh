@@ -59,6 +59,7 @@ BIN_PATH=""; SERVICE_FILE=""; DESKTOP_FILE=""; PAM_SERVICE_FILE=""; SYSTEMD_USER
 TARGET_USER=""; TARGET_HOME=""; TARGET_GROUP=""
 STAGE_ROOT=""; STAGED_APP=""; RELEASE_BACKUP=""; DIAGNOSTIC_PATH=""
 STATE_BACKUP_DIR=""
+SOURCE_REVISION=""; UPDATE_SKIPPED=0
 TEMP_SERVER_PID=""; SERVICE_WAS_ACTIVE=0; SERVICE_WAS_ENABLED=0
 MUTATIONS_STARTED=0
 CURRENT_STEP="Uruchamianie instalatora"
@@ -679,6 +680,45 @@ validate_source_tree() {
   [[ -f "$d/backend/requirements.txt" && -f "$d/backend/app/main.py" && -f "$d/backend/app/bootstrap_admin.py" && -f "$d/frontend/index.html" && -f "$d/.env.example" ]] \
     || die "Source does not contain the expected Algen PAM project structure."
 }
+source_fingerprint() {
+  local source_dir="$1"
+  python3 - "$source_dir" <<'PY'
+import hashlib
+import os
+import sys
+
+root = os.path.abspath(sys.argv[1])
+digest = hashlib.sha256()
+for current, directories, files in os.walk(root):
+    directories[:] = sorted(name for name in directories if name not in {".git", ".venv", "__pycache__", "data", "playwright-browsers"})
+    for name in sorted(files):
+        path = os.path.join(current, name)
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        if relative == ".env" or name.endswith((".pyc", ".pyo")):
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        if os.path.islink(path):
+            digest.update(b"link\0" + os.readlink(path).encode("utf-8"))
+        else:
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+marker_value() {
+  local key="$1" marker="$INSTALL_DIR/.algen-pam-install"
+  [[ -f "$marker" && ! -L "$marker" ]] || return 1
+  sed -n "s/^${key}=//p" "$marker" | head -n 1
+}
+source_is_unchanged() {
+  local installed_revision=""
+  [[ "$MODE" == update && -n "$SOURCE_REVISION" ]] || return 1
+  installed_revision="$(marker_value source_revision || true)"
+  [[ -n "$installed_revision" && "$installed_revision" == "$SOURCE_REVISION" ]]
+}
 acquire_source() {
   STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/algen-pam.XXXXXX")"; STAGED_APP="$STAGE_ROOT/release"
   local local_repo="${REPO#file://}"
@@ -711,6 +751,8 @@ acquire_source() {
     rm -rf "$STAGED_APP/.git"
   fi
   validate_source_tree "$STAGED_APP"
+  SOURCE_REVISION="$(source_fingerprint "$STAGED_APP")"
+  [[ "$SOURCE_REVISION" =~ ^[a-f0-9]{64}$ ]] || die "Could not calculate a valid source revision."
 }
 build_staged_release() {
   info "Building and validating the staged release."
@@ -860,7 +902,7 @@ validate_runtime() {
 # ---- backup, deployment, rollback, uninstall ------------------------------
 write_marker() {
   local tmp="$STAGE_ROOT/marker"
-  printf 'app=%s\ninstaller_version=%s\nscope=%s\ninstall_dir=%s\ninstalled_at=%s\n' "$APP_ID" "$INSTALLER_VERSION" "$SCOPE" "$INSTALL_DIR" "$(date -u +%FT%TZ)" >"$tmp"
+  printf 'app=%s\ninstaller_version=%s\nsource_revision=%s\nscope=%s\ninstall_dir=%s\ninstalled_at=%s\n' "$APP_ID" "$INSTALLER_VERSION" "$SOURCE_REVISION" "$SCOPE" "$INSTALL_DIR" "$(date -u +%FT%TZ)" >"$tmp"
   target_cmd install -m 0600 "$tmp" "$INSTALL_DIR/.algen-pam-install"
 }
 backup_state() {
@@ -1011,6 +1053,11 @@ execute_install_or_update() {
   install_dependencies
   section "Pobieranie źródeł"
   acquire_source
+  if source_is_unchanged; then
+    UPDATE_SKIPPED=1
+    ok "Zainstalowana wersja jest aktualna. Pomijam venv, pip oraz pobieranie przeglądarek Playwright."
+    return 0
+  fi
   section "Budowanie nowej wersji"
   build_staged_release
   create_system_user_if_needed
@@ -1091,10 +1138,17 @@ print_completion() {
   section "Operacja zakończona"
   case "$MODE" in
     install|update|reinstall)
-      local address service_prefix="" journal_prefix=""
-      [[ "$APP_HOST" == 0.0.0.0 ]] && address="$(first_host_ipv4)" || address="$APP_HOST"
-      [[ "$SCOPE" == user ]] && { service_prefix="--user "; journal_prefix="--user "; }
-      cat <<EOF
+      if [[ "$UPDATE_SKIPPED" -eq 1 ]]; then
+        cat <<EOF
+
+Brak nowej wersji — instalacja zależności i restart usługi zostały pominięte.
+Odcisk źródeł: $SOURCE_REVISION
+EOF
+      else
+        local address service_prefix="" journal_prefix=""
+        [[ "$APP_HOST" == 0.0.0.0 ]] && address="$(first_host_ipv4)" || address="$APP_HOST"
+        [[ "$SCOPE" == user ]] && { service_prefix="--user "; journal_prefix="--user "; }
+        cat <<EOF
 
 Operacja zakończona pomyślnie.
 
@@ -1118,8 +1172,9 @@ Dane:
 Log instalatora:
   $LOG_FILE
 EOF
-      print_generated_admin_password
-      print_os_login_hint
+        print_generated_admin_password
+        print_os_login_hint
+      fi
       ;;
     backup) ok "Kopia bezpieczeństwa jest dostępna w: $STATE_BACKUP_DIR" ;;
     remove-app) ok "Kod aplikacji i integracje zostały usunięte; stan instalacji zachowano." ;;
