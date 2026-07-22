@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import socket
+import unicodedata
 from datetime import datetime
 from io import StringIO
 from typing import Any
@@ -92,7 +93,13 @@ def validate_step(mode: str, resource_type: str | None, step: int, data: dict[st
         if resource_type == "ssh" and auth in {"password", "private_key"} and not (connection.get("secret_ref_id") or connection.get("secret_input_key")): errors.append({"field": "connection.secret_ref_id", "message": "Wybierz istniejący sekret lub utwórz nowy"})
         if resource_type == "web" and auth == "form": required(connection, ["username_selector", "password_selector", "submit_selector"], "connection")
     elif step == 5 and mode != "request_access":
-        if not data.get("access_group_id"): required(data.get("access_profile", {}), ["name", "access_option"], "access_profile")
+        if not data.get("access_group_id"):
+            profile = data.get("access_profile", {})
+            required(profile, ["name", "access_option"], "access_profile")
+            environment = data.get("resource", {}).get("environment")
+            if environment and profile.get("name"):
+                try: build_safe_name(environment, profile["name"])
+                except ValueError as exc: errors.append({"field": "access_profile.name", "message": str(exc)})
     elif step == 6 and mode != "request_access":
         policy = data.get("policy", {}); criticality = data.get("resource", {}).get("criticality", "low")
         if criticality in {"high", "critical"} and policy.get("require_recording") is False and not policy.get("control_override_justification"): errors.append({"field": "policy.control_override_justification", "message": "Uzasadnij wyłączenie nagrywania dla zasobu krytycznego"})
@@ -242,6 +249,22 @@ def apply_security_defaults(resource: dict[str, Any], policy: dict[str, Any]) ->
     return result
 
 
+def build_safe_name(environment: str, custom_name: str) -> str:
+    """Build the canonical safe name used by the access wizard."""
+    def normalize_part(value: str) -> str:
+        ascii_value = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^A-Z0-9]+", "-", ascii_value.upper()).strip("-")
+
+    environment_part = normalize_part(environment)
+    name_part = normalize_part(custom_name)
+    if not environment_part or not name_part:
+        raise ValueError("Środowisko i nazwa safe'a muszą zawierać litery lub cyfry")
+    safe_name = f"{environment_part}-ENV-CUSTOM-{name_part}"
+    if len(safe_name) > 128:
+        raise ValueError("Nazwa safe'a w formacie SRODOWISKO-ENV-CUSTOM-NAZWA może mieć maksymalnie 128 znaków")
+    return safe_name
+
+
 def _create_secret(db: DBSession, item: SecretInput, user_id: int) -> Secret:
     return LocalEncryptedBackend(db).create_secret(item.name, item.secret_type, item.value, {"actor_id": user_id, "description": "Utworzono w kreatorze dostępu"})
 
@@ -302,14 +325,14 @@ def complete_transaction(db: DBSession, user: User, draft: AccessWizardDraft, in
         group = db.get(ServerGroup, int(data["access_group_id"])) if data.get("access_group_id") else None
         if not group:
             profile = data["access_profile"]
-            group = ServerGroup(name=profile["name"], description=profile.get("description"), environment=server.environment, enabled=True, created_by_id=user.id, updated_by_id=user.id, allowed_access_types=profile.get("access_option", "ssh_only"), max_grant_minutes=int(policy["maximum_duration_minutes"]), allowed_durations=",".join(str(item) for item in profile.get("allowed_durations", [30, 60])), require_approval=bool(policy["require_approval"]), require_mfa=bool(policy["require_mfa"]), require_gateway=bool(data.get("connection", {}).get("gateway_enabled", server.protocol == "ssh")), deny_direct_ssh=not bool(data.get("connection", {}).get("direct_access_enabled", False)), require_command_logging=bool(policy.get("require_command_logging", True)), require_session_recording=bool(policy["require_recording"]), allowed_weekdays=str(policy.get("allowed_weekdays", "0,1,2,3,4,5,6")), allow_auto_grant=any(item.get("assignment_mode") == "direct_launch" for item in data.get("assignments", [])), require_reason=True)
+            group = ServerGroup(name=build_safe_name(server.environment, profile["name"]), description=profile.get("description"), environment=server.environment, enabled=True, created_by_id=user.id, updated_by_id=user.id, allowed_access_types=profile.get("access_option", "ssh_only"), max_grant_minutes=int(policy["maximum_duration_minutes"]), allowed_durations=",".join(str(item) for item in profile.get("allowed_durations", [30, 60])), require_approval=bool(policy["require_approval"]), require_mfa=bool(policy["require_mfa"]), require_gateway=bool(data.get("connection", {}).get("gateway_enabled", server.protocol == "ssh")), deny_direct_ssh=not bool(data.get("connection", {}).get("direct_access_enabled", False)), require_command_logging=bool(policy.get("require_command_logging", True)), require_session_recording=bool(policy["require_recording"]), allowed_weekdays=str(policy.get("allowed_weekdays", "0,1,2,3,4,5,6")), allow_auto_grant=any(item.get("assignment_mode") == "direct_launch" for item in data.get("assignments", [])), require_reason=True)
             db.add(group); db.flush()
         if not db.query(ServerGroupMember).filter_by(server_group_id=group.id, server_id=server.id).first(): db.add(ServerGroupMember(server_group_id=group.id, server_id=server.id, created_by_id=user.id))
         assigned: set[int] = set()
         for item in data.get("assignments", []): assigned |= _assignment_user_ids(db, item)
         for user_id in assigned:
             if not db.query(ServerGroupUserMembership).filter_by(server_group_id=group.id, user_id=user_id).first(): db.add(ServerGroupUserMembership(server_group_id=group.id, user_id=user_id, group_role="user", enabled=True, created_by_id=user.id, updated_by_id=user.id))
-        db.flush(); result = {"mode": mode, "server_id": server.id, "access_group_id": group.id, "assigned_user_ids": sorted(assigned)}
+        db.flush(); result = {"mode": mode, "server_id": server.id, "access_group_id": group.id, "safe_name": group.name, "assigned_user_ids": sorted(assigned)}
         write_audit(db, "access_wizard.complete", f"Utworzono konfigurację dostępu do {server.hostname}", user_id=user.id, server_id=server.id, metadata={"mode": mode, "access_group_id": group.id, "assigned_user_count": len(assigned)})
     submission = AccessWizardSubmission(user_id=user.id, submission_key=submission_key, result_json=json.dumps(result)); db.add(submission); db.delete(draft)
     _before_commit_hook()

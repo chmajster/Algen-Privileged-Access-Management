@@ -3,6 +3,12 @@
   const REQUEST_STEPS = ["Zasób", "Profil dostępu", "Czas dostępu", "Uzasadnienie i wysłanie"];
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+  const safeName = (environment, name) => {
+    const part = (value) => String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const env = part(environment), custom = part(name);
+    return env && custom ? `${env}-ENV-CUSTOM-${custom}` : "";
+  };
+  const defaultAdminAssignment = () => ({subject_type:"role",subject_identifier:"admin",assignment_mode:"request_required"});
 
   const wizard = {
     root: null, mode: null, resourceType: null, preset: null, step: 0, draftId: null,
@@ -27,8 +33,8 @@
 
     async chooseMode(mode) {
       this.mode = mode; this.step = 1;
-      if (mode === "create_resource") this.data = {resource:{environment:"prod",criticality:"medium",enabled:true,tags:[]},connection:{},access_profile:{allowed_durations:[30,60]},policy:{},assignments:[]};
-      else this.data = {assignments:[],policy:{maximum_duration_minutes:60},access_profile:{allowed_durations:[30,60]}};
+      if (mode === "create_resource") this.data = {resource:{environment:"prod",criticality:"medium",enabled:true,tags:[]},connection:{},access_profile:{allowed_durations:[30,60]},policy:{},assignments:[defaultAdminAssignment()]};
+      else this.data = {assignments:[defaultAdminAssignment()],policy:{maximum_duration_minutes:60},access_profile:{allowed_durations:[30,60]}};
       await this.ensureDraft(); this.render();
     },
 
@@ -126,7 +132,8 @@
 
     permissionsStep() {
       const groups = this.pam.state().data.serverGroups || [];
-      return `<div class="form-grid wizard-fields"><label class="form-label span-2">Użyj istniejącego profilu dostępu<select class="form-select" data-bind="access_group_id"><option value="">Utwórz nowy profil</option>${groups.map((g)=>`<option value="${g.id}" ${String(this.field("access_group_id"))===String(g.id)?"selected":""}>${esc(g.name)}</option>`).join("")}</select><small>Profil określa dozwolony typ dostępu i limity.</small></label>${!this.field("access_group_id")?`${this.input("access_profile.name","Nazwa profilu","Operatorzy ERP — standard","Czytelna nazwa przeznaczenia dostępu.")}${this.input("access_profile.description","Opis profilu","Dostęp operacyjny bez pełnego sudo","", "textarea")}${this.select("access_profile.access_option","Poziom uprawnień",[["ssh_only","Zwykły dostęp"],["limited_sudo","Ograniczone sudo"],["full_sudo","Pełne sudo"]])}`:""}</div>`;
+      const generatedName = safeName(this.field("resource.environment"), this.field("access_profile.name"));
+      return `<div class="form-grid wizard-fields"><label class="form-label span-2">Użyj istniejącego profilu dostępu<select class="form-select" data-bind="access_group_id"><option value="">Utwórz nowy safe</option>${groups.map((g)=>`<option value="${g.id}" ${String(this.field("access_group_id"))===String(g.id)?"selected":""}>${esc(g.name)}</option>`).join("")}</select><small>Safe określa dozwolony typ dostępu i limity.</small></label>${!this.field("access_group_id")?`${this.input("access_profile.name","Nazwa własna safe'a","Operatorzy ERP — standard","Kreator doda prefiks SRODOWISKO-ENV-CUSTOM.")}<div class="field-note span-2">Finalna nazwa: <strong>${esc(generatedName || "SRODOWISKO-ENV-CUSTOM-NAZWA")}</strong></div>${this.input("access_profile.description","Opis profilu","Dostęp operacyjny bez pełnego sudo","", "textarea")}${this.select("access_profile.access_option","Poziom uprawnień",[["ssh_only","Zwykły dostęp"],["limited_sudo","Ograniczone sudo"],["full_sudo","Pełne sudo"]])}`:""}</div>`;
     },
 
     securityStep() {
@@ -152,6 +159,8 @@
                   if (u) name = u.username;
                 } else if (a.subject_type === 'group') {
                   name = String(a.subject_identifier) + " (Grupa)";
+                } else if (a.subject_type === 'role' && a.subject_identifier === 'admin') {
+                  name = "Administratorzy (rola)";
                 }
                 return `<div class="badge bg-primary p-2 d-flex align-items-center">${name} <i class="bi bi-x-circle ms-2 cursor-pointer" data-remove-assignment="${a.subject_type}:${a.subject_identifier}"></i></div>`;
               }).join("")}
@@ -170,7 +179,8 @@
 
     summaryStep() {
       const r=this.data.resource||{},c=this.data.connection||{},p=this.data.policy||{};
-      return `<div class="summary-grid"><article><h3>Zasób</h3><dl><dt>Nazwa</dt><dd>${esc(r.name)}</dd><dt>Typ</dt><dd>${esc(this.resourceType?.toUpperCase())}</dd><dt>Środowisko</dt><dd>${esc(r.environment)}</dd><dt>Krytyczność</dt><dd>${esc(r.criticality)}</dd></dl></article><article><h3>Połączenie</h3><dl><dt>Cel</dt><dd>${esc(this.resourceType==="web"?c.start_url:`${c.hostname}:${c.port||22}`)}</dd><dt>Logowanie</dt><dd>${esc(c.authentication_type)}</dd><dt>Gateway</dt><dd>${c.gateway_enabled?"tak":"nie"}</dd></dl></article><article><h3>Kontrole</h3><dl><dt>MFA</dt><dd>${p.require_mfa?"tak":"nie"}</dd><dt>Akceptacja</dt><dd>${p.require_approval?"tak":"nie"}</dd><dt>Nagrywanie</dt><dd>${p.require_recording?"tak":"nie"}</dd><dt>Limit</dt><dd>${esc(p.maximum_duration_minutes)} min</dd></dl></article><article><h3>Przydziały</h3><p>${(this.data.assignments||[]).length} reguł przydziału</p><p class="text-secondary">Tworzenie jest atomowe. Błąd cofnie zasób, sekret, profil i członkostwa.</p></article></div>`;
+      const selected=(this.pam.state().data.serverGroups||[]).find(g=>String(g.id)===String(this.field("access_group_id")));const finalSafeName=selected?.name||safeName(r.environment,this.field("access_profile.name"));
+      return `<div class="summary-grid"><article><h3>Zasób</h3><dl><dt>Nazwa</dt><dd>${esc(r.name)}</dd><dt>Typ</dt><dd>${esc(this.resourceType?.toUpperCase())}</dd><dt>Środowisko</dt><dd>${esc(r.environment)}</dd><dt>Krytyczność</dt><dd>${esc(r.criticality)}</dd><dt>Safe</dt><dd>${esc(finalSafeName)}</dd></dl></article><article><h3>Połączenie</h3><dl><dt>Cel</dt><dd>${esc(this.resourceType==="web"?c.start_url:`${c.hostname}:${c.port||22}`)}</dd><dt>Logowanie</dt><dd>${esc(c.authentication_type)}</dd><dt>Gateway</dt><dd>${c.gateway_enabled?"tak":"nie"}</dd></dl></article><article><h3>Kontrole</h3><dl><dt>MFA</dt><dd>${p.require_mfa?"tak":"nie"}</dd><dt>Akceptacja</dt><dd>${p.require_approval?"tak":"nie"}</dd><dt>Nagrywanie</dt><dd>${p.require_recording?"tak":"nie"}</dd><dt>Limit</dt><dd>${esc(p.maximum_duration_minutes)} min</dd></dl></article><article><h3>Przydziały</h3><p>${(this.data.assignments||[]).length} reguł przydziału</p><p class="text-secondary">Tworzenie jest atomowe. Błąd cofnie zasób, sekret, profil i członkostwa.</p></article></div>`;
     },
 
     requestContent() {
@@ -279,7 +289,7 @@
     async complete() {
       if(this.mode==="request_access"&&String(this.field("justification","")).trim().length<10){this.showError("Uzasadnienie musi mieć co najmniej 10 znaków");return}
       await this.save(); const result=await this.pam.api("/api/access-wizard/complete",{method:"POST",body:JSON.stringify({draft_id:this.draftId,submission_key:crypto.randomUUID(),secret_inputs:this.transientSecrets(),accept_warnings:false})});
-      this.secretInputs={};this.root.querySelector(".wizard-main").innerHTML=`<div class="wizard-success"><i class="bi bi-check-circle"></i><h2>${this.mode==="request_access"?"Wniosek został wysłany":"Dostęp został utworzony"}</h2><p>Identyfikator: ${esc(result.request_id||result.server_id)}</p><button class="btn btn-primary" data-wizard="finish">Wróć do PAM</button></div>`;this.root.querySelector("[data-wizard=finish]").onclick=async()=>{this.close();await this.pam.refresh()};
+      this.secretInputs={};this.root.querySelector(".wizard-main").innerHTML=`<div class="wizard-success"><i class="bi bi-check-circle"></i><h2>${this.mode==="request_access"?"Wniosek został wysłany":"Dostęp został utworzony"}</h2><p>Identyfikator: ${esc(result.request_id||result.server_id)}</p>${result.safe_name?`<p>Safe: <strong>${esc(result.safe_name)}</strong></p>`:""}<button class="btn btn-primary" data-wizard="finish">Wróć do PAM</button></div>`;this.root.querySelector("[data-wizard=finish]").onclick=async()=>{this.close();await this.pam.refresh()};
     }
   };
 

@@ -179,6 +179,8 @@ def test_complete_is_atomic_idempotent_and_encrypts_transient_secret(client, mon
         assert server.direct_access_enabled is False
         assert server.ssh_auth_secret_id == secret.id
         assert "NeverStoreThisInDraft!" not in (secret.encrypted_value or "")
+        assert group.name == "PROD-ENV-CUSTOM-PROFIL-KREATORA"
+        assert result["safe_name"] == group.name
         assert group.require_mfa is True and group.require_session_recording is True
         assert db.query(ServerGroupMember).filter_by(server_group_id=group.id, server_id=server.id).count() == 1
         assert db.query(ServerGroupUserMembership).filter_by(server_group_id=group.id).count() >= 1
@@ -227,7 +229,7 @@ def test_complete_rolls_back_every_created_object(client, monkeypatch):
 
     with SessionLocal() as db:
         assert db.query(Server).filter_by(hostname="rollback-target.example.test").count() == 0
-        assert db.query(ServerGroup).filter(ServerGroup.name.in_(["Rollback resource group", "Rollback access profile"])).count() == 0
+        assert db.query(ServerGroup).filter(ServerGroup.name.in_(["Rollback resource group", "PROD-ENV-CUSTOM-ROLLBACK-ACCESS-PROFILE"])).count() == 0
         assert db.query(Secret).filter_by(name="Rollback secret").count() == 0
         assert db.query(AccessWizardSubmission).filter_by(submission_key="wizard-rollback-001").count() == 0
         assert db.get(AccessWizardDraft, draft["id"]) is not None
