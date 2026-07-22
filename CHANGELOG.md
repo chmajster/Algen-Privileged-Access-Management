@@ -8,6 +8,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Added
 
+- Added the `request.form_schema` policy for building and validating the Request connect form from administrator-configured JSON.
 - Added a request-to-connect flow and a persistent column chooser to the Access view. Its default columns are Host, Safe, Username, and Actions.
 - Installation instructions in `README.md`.
 - Initial changelog with an `Unreleased` section for future updates.
@@ -27,6 +28,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Changed
 
+- The access wizard now shows a live Safe-name preview derived from the selected environment and user-provided name in the `SRODOWISKO-ENV-CUSTOM-NAZWA` format.
 - MFA and seeded policy rules are disabled by default for new installations; existing explicitly configured policy records are preserved during updates.
 - Updates now compare a stored source fingerprint and skip virtualenv, pip, Playwright browser installation, backup, deployment, and service restart when no new application version is available.
 - Translated installation instructions in `README.md` to Polish.
@@ -42,6 +44,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Fixed
 
+- Session expiry and logout now close the active entity modal and remove its backdrop before showing the login screen.
 - MFA login failures are counted until the complete authentication flow succeeds.
 - Session duration calculation handles SQLite timestamps that lost timezone metadata.
 

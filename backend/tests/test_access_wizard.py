@@ -9,6 +9,7 @@ from app.models import (
     ServerGroupUserMembership,
 )
 from app.wizard_schemas import CheckResult
+from app.wizard_service import build_safe_name
 
 
 def auth_headers(client, username="admin", password="admin123"):
@@ -83,6 +84,10 @@ async def successful_ssh_test(*_args, **_kwargs):
         CheckResult(name=name, status="success", message="OK")
         for name in ("dns", "tcp", "host_key", "authentication", "required_privileges")
     ]
+
+
+def test_safe_name_is_derived_from_user_choices():
+    assert build_safe_name("stage", "Płatności ERP") == "STAGE-ENV-CUSTOM-PLATNOSCI-ERP"
 
 
 def create_wizard_draft(client, headers, data=None):

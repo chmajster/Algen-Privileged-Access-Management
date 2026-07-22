@@ -22,6 +22,7 @@ class PolicyDefinition:
 
 POLICY_CATEGORIES = [
     "Authentication & Access",
+    "Access Request",
     "Session Control",
     "Gateway Configuration",
     "Secret Management",
@@ -32,6 +33,34 @@ POLICY_REGISTRY: Dict[str, PolicyDefinition] = {}
 
 def register_policy(policy: PolicyDefinition):
     POLICY_REGISTRY[policy.policy_id] = policy
+
+
+DEFAULT_REQUEST_FORM_SCHEMA = {
+    "title": "Request connect",
+    "server_label": "Server",
+    "access_type_label": "Access type",
+    "duration_label": "Duration",
+    "reason_label": "Reason",
+    "submit_label": "Send request",
+    "access_types": ["ssh_only", "limited_sudo", "full_sudo"],
+    "durations": [15, 30, 60, 120, 240, 480],
+    "show_access_type": True,
+    "show_duration": True,
+    "show_reason": True,
+    "default_reason": "Maintenance task",
+    "warning": "Full sudo can bypass bash history logging. Prefer tlog, auditd, sudo I/O logs, or an SSH gateway for high-trust recording.",
+}
+
+
+register_policy(PolicyDefinition(
+    policy_id="request.form_schema",
+    name="Request connect form",
+    description="Konfiguracja formularza Request connect: pola, etykiety, wartości dostępne i komunikat ostrzegawczy.",
+    category="Access Request",
+    value_type="object",
+    default_value=DEFAULT_REQUEST_FORM_SCHEMA,
+    allowed_scopes=["global"],
+))
 
 # 1. Authentication & Access
 register_policy(PolicyDefinition(

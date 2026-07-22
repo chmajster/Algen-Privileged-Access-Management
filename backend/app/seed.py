@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 
 from sqlalchemy.orm import Session
 
@@ -104,7 +105,7 @@ def seed_demo_data(db: Session) -> None:
                     name=pd.name,
                     description=pd.description,
                     status="disabled",
-                    value_json=f'"{pd.default_value}"' if pd.value_type == "string" else str(pd.default_value).lower() if pd.value_type == "boolean" else str(pd.default_value),
+                    value_json=json.dumps(pd.default_value, ensure_ascii=False),
                     scope="global",
                     priority=100
                 )

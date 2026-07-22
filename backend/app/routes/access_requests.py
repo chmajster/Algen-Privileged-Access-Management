@@ -8,11 +8,29 @@ from app.database import get_db
 from app.models import AccessGrant, AccessRequest, Server, User
 from app.mfa.step_up import has_valid_step_up, require_step_up
 from app.policy.engine import PolicyEngine
+from app.policy.registry import DEFAULT_REQUEST_FORM_SCHEMA
+from app.policy.resolver import resolve_effective_policies
 from app.services import create_grant_for_request, evaluate_request_policy
 from app.rbac import constraints_for_request, has_permission, is_global_admin, normalized_role, require_permission, scope_server_query
 
 
 router = APIRouter(prefix="/api/access-requests", tags=["access-requests"])
+
+
+def _request_form_config(db: Session) -> dict:
+    raw = resolve_effective_policies(db).get("request.form_schema", {})
+    raw = raw if isinstance(raw, dict) else {}
+    config = {**DEFAULT_REQUEST_FORM_SCHEMA, **raw}
+    access_types = [item for item in config.get("access_types", []) if item in {"ssh_only", "limited_sudo", "full_sudo"}]
+    durations = sorted({int(item) for item in config.get("durations", []) if str(item).isdigit() and 1 <= int(item) <= 10080})
+    config["access_types"] = access_types or DEFAULT_REQUEST_FORM_SCHEMA["access_types"]
+    config["durations"] = durations or DEFAULT_REQUEST_FORM_SCHEMA["durations"]
+    for key in ("title", "server_label", "access_type_label", "duration_label", "reason_label", "submit_label", "default_reason", "warning"):
+        value = config.get(key)
+        config[key] = str(value)[:2000] if value is not None else ""
+    for key in ("show_access_type", "show_duration", "show_reason"):
+        config[key] = bool(config.get(key, True))
+    return config
 
 
 def _out(item: AccessRequest) -> dict:
@@ -33,12 +51,22 @@ def list_requests(current_user: User = Depends(get_current_user), db: Session = 
     return [_out(item) for item in query.order_by(AccessRequest.created_at.desc()).all()]
 
 
+@router.get("/form-config", response_model=dict)
+def get_request_form_config(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _request_form_config(db)
+
+
 @router.post("", response_model=schemas.AccessRequestOut)
 def create_request(payload: schemas.AccessRequestCreate, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     server = db.get(Server, payload.server_id)
     if not server:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Server not found")
     require_permission(db, current_user, "access.request", server_id=server.id, conceal=True)
+    form_config = _request_form_config(db)
+    if payload.requested_access_type not in form_config["access_types"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Access type is not allowed by the Request connect form policy")
+    if payload.requested_duration_minutes not in form_config["durations"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Duration is not allowed by the Request connect form policy")
     constraints = constraints_for_request(db, current_user, server.id)
     if payload.requested_access_type not in constraints["allowed_access_types"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access type is not allowed by the access group")

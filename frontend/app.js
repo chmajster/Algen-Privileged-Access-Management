@@ -794,7 +794,7 @@ function renderPolicyDetails(insts) {
             <div class="mb-3">
               <label class="form-label">Value (JSON format)</label>
               <textarea class="form-control font-monospace" id="pol_value_json" rows="3" required>${escapeHtml(i.value_json || JSON.stringify(d.default_value))}</textarea>
-              <div class="form-text">Type: ${d.type}</div>
+              <div class="form-text">Type: ${d.value_type}</div>
             </div>
             
             <div class="mb-3">
@@ -1132,17 +1132,21 @@ async function handleStepUpError(err, retry = null) {
   return false;
 }
 
-function openRequestModal(serverId = null) {
-  modal(serverId ? "Request connect" : "Request Access", `
+async function openRequestModal(serverId = null) {
+  const config = await api("/api/access-requests/form-config");
+  const accessTypes = config.access_types || ["ssh_only"];
+  const durations = config.durations || [30];
+  modal(config.title || (serverId ? "Request connect" : "Request Access"), `
     <div class="form-grid">
-      <div><label class="form-label">Server</label><select id="reqServer" class="form-select">${state.data.servers.map((s) => `<option value="${s.id}" ${s.id === serverId ? "selected" : ""}>${escapeHtml(s.display_name || s.hostname)} (${escapeHtml(s.environment)})</option>`).join("")}</select></div>
-      <div><label class="form-label">Access type</label><select id="reqType" class="form-select"><option>ssh_only</option><option>limited_sudo</option><option>full_sudo</option></select></div>
-      <div><label class="form-label">Duration</label><select id="reqDuration" class="form-select"><option>15</option><option>30</option><option>60</option><option>120</option><option>240</option><option>480</option></select></div>
-      <div class="span-2"><label class="form-label">Reason</label><textarea id="reqReason" class="form-control" rows="3">Maintenance task</textarea></div>
-      <div class="span-2 alert alert-warning mb-0">Full sudo can bypass bash history logging. Prefer tlog, auditd, sudo I/O logs, or an SSH gateway for high-trust recording.</div>
+      <div><label class="form-label">${escapeHtml(config.server_label || "Server")}</label><select id="reqServer" class="form-select">${state.data.servers.map((s) => `<option value="${s.id}" ${s.id === serverId ? "selected" : ""}>${escapeHtml(s.display_name || s.hostname)} (${escapeHtml(s.environment)})</option>`).join("")}</select></div>
+      ${config.show_access_type ? `<div><label class="form-label">${escapeHtml(config.access_type_label || "Access type")}</label><select id="reqType" class="form-select">${accessTypes.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></div>` : `<input id="reqType" type="hidden" value="${escapeHtml(accessTypes[0])}">`}
+      ${config.show_duration ? `<div><label class="form-label">${escapeHtml(config.duration_label || "Duration")}</label><select id="reqDuration" class="form-select">${durations.map((value) => `<option value="${value}">${value}</option>`).join("")}</select></div>` : `<input id="reqDuration" type="hidden" value="${durations[0]}">`}
+      ${config.show_reason ? `<div class="span-2"><label class="form-label">${escapeHtml(config.reason_label || "Reason")}</label><textarea id="reqReason" class="form-control" rows="3">${escapeHtml(config.default_reason || "")}</textarea></div>` : `<input id="reqReason" type="hidden" value="${escapeHtml(config.default_reason || "Access requested through policy form")}">`}
+      ${config.warning ? `<div class="span-2 alert alert-warning mb-0">${escapeHtml(config.warning)}</div>` : ""}
     </div>`,
     () => api("/api/access-requests", { method: "POST", body: JSON.stringify({ server_id: Number(formValue("reqServer")), reason: formValue("reqReason"), requested_duration_minutes: Number(formValue("reqDuration")), requested_access_type: formValue("reqType") }) })
   );
+  $("#entityModalSave").textContent = config.submit_label || "Send request";
 }
 
 function openSshConnectModal(grant) {
@@ -1474,7 +1478,7 @@ document.body.addEventListener("click", async (event) => {
   if (action === "open-access-wizard") { window.AccessWizard?.open(); return; }
   try {
     if (action === "access-columns") { openAccessColumnsModal(); return; }
-    if (action === "request-connect") { openRequestModal(id); return; }
+    if (action === "request-connect") { await openRequestModal(id); return; }
     if (action === "connect-access") {
       const grant = state.data.grants.find((item) => item.id === id);
       if (!grant) throw new Error("Active grant not found");
@@ -1617,6 +1621,21 @@ document.body.addEventListener("click", async (event) => {
 function showLogin() {
   if (state.accessRefreshTimer) clearInterval(state.accessRefreshTimer);
   state.accessRefreshTimer = null;
+  const modalElement = $("#entityModal");
+  if (modalElement?.classList.contains("show")) entityModal.hide();
+  if (modalElement) {
+    modalElement.classList.remove("show");
+    modalElement.style.display = "none";
+    modalElement.setAttribute("aria-hidden", "true");
+    modalElement.removeAttribute("aria-modal");
+    modalElement.removeAttribute("role");
+  }
+  $("#entityModalSave").onclick = null;
+  document.querySelectorAll(".modal-backdrop").forEach((backdrop) => backdrop.remove());
+  document.body.classList.remove("modal-open");
+  document.body.style.removeProperty("overflow");
+  document.body.style.removeProperty("padding-right");
+  document.activeElement?.blur();
   $("#loginView").classList.remove("d-none");
   $("#appView").classList.add("d-none");
 }

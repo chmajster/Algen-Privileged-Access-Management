@@ -252,7 +252,8 @@ def apply_security_defaults(resource: dict[str, Any], policy: dict[str, Any]) ->
 def build_safe_name(environment: str, custom_name: str) -> str:
     """Build the canonical safe name used by the access wizard."""
     def normalize_part(value: str) -> str:
-        ascii_value = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+        normalized_value = str(value).translate(str.maketrans({"Ł": "L", "ł": "l"}))
+        ascii_value = unicodedata.normalize("NFKD", normalized_value).encode("ascii", "ignore").decode("ascii")
         return re.sub(r"[^A-Z0-9]+", "-", ascii_value.upper()).strip("-")
 
     environment_part = normalize_part(environment)
