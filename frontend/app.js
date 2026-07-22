@@ -11,6 +11,7 @@ const state = {
   pendingStepUpAction: null,
   selectedReplay: null,
   liveSession: null,
+  accessRefreshTimer: null,
   data: {},
 };
 
@@ -36,6 +37,27 @@ const navItems = [
   ["identityAdmin", "Identity Admin", "bi-person-badge", "Providers, users, groups, lockout", ["admin"]],
   ["authEvents", "Auth Events", "bi-clock-history", "Authentication and MFA timeline", ["admin"]],
 ];
+
+const defaultAccessColumnIds = ["host", "safe", "username", "actions"];
+const accessColumnDefinitions = [
+  ["host", "HOST"],
+  ["safe", "SAFE"],
+  ["username", "USERNAME"],
+  ["ip", "IP / PORT"],
+  ["environment", "ENVIRONMENT"],
+  ["criticality", "CRITICALITY"],
+  ["owner", "OWNER"],
+  ["protocol", "PROTOCOL"],
+  ["sshSecret", "SSH SECRET"],
+  ["gatewaySecret", "GATEWAY SECRET"],
+  ["rotation", "ROTATION"],
+  ["direct", "DIRECT"],
+  ["gateway", "GATEWAY"],
+  ["logging", "LOGGING"],
+  ["recording", "RECORDING"],
+  ["enabled", "ENABLED"],
+  ["actions", "ACTIONS"],
+].map(([id, label]) => ({ id, label }));
 
 const $ = (selector) => document.querySelector(selector);
 const entityModal = new bootstrap.Modal($("#entityModal"));
@@ -311,21 +333,85 @@ function renderAdminPanel() {
 
 function renderServers() {
   const canAdmin = state.user.role === "admin";
+  const columns = selectedAccessColumns();
   $("#content").innerHTML = `
     <div class="toolbar">
       ${filterBox("serverFilter", "Filter servers")}
+      <button class="btn btn-outline-secondary" data-action="access-columns"><i class="bi bi-layout-three-columns"></i> Kolumny</button>
       <button class="btn btn-primary" data-action="open-access-wizard"><i class="bi bi-magic"></i> ${canAdmin ? "Utwórz dostęp" : "Poproś o dostęp"}</button>
     </div>
-    ${state.data.servers.length ? table(["Host", "IP", "Env", "Criticality", "Groups", "Owner", "SSH secret", "Gateway secret", "Rotation", "Direct", "Gateway", "Logging", "Recording", "Enabled", "Actions"], state.data.servers.map((s) => `
-      <tr class="filter-row"><td>${escapeHtml(s.display_name || s.hostname)}<div class="small text-secondary">${escapeHtml(s.hostname)}</div></td><td>${escapeHtml(s.ip_address)}:${s.ssh_port}</td><td>${escapeHtml(s.environment)}</td><td>${escapeHtml(s.criticality)}</td><td>${(s.access_group_ids || []).map(serverGroupName).join(", ")}</td><td>${escapeHtml(s.owner)}</td>
-      <td>${secretName(s.ssh_auth_secret_id || s.secret_ref_id)}</td><td>${secretName(s.gateway_secret_ref_id)}</td><td>${s.rotation_enabled ? "on" : "off"}</td><td>${s.direct_access_enabled ? "on" : "off"}</td><td>${s.gateway_enabled ? "on" : "off"}</td><td>${s.command_logging_enabled ? "on" : "off"}</td><td>${s.session_recording_enabled ? "on" : "off"}</td><td>${s.enabled ? "yes" : "no"}</td>
-      <td class="text-nowrap">
-        <button class="btn btn-sm btn-outline-primary" data-action="test-server" data-id="${s.id}" title="Test connection"><i class="bi bi-plug"></i></button>
-        <button class="btn btn-sm btn-outline-secondary ${canAdmin ? "" : "d-none"}" data-action="edit-server" data-id="${s.id}" title="Edit"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-warning ${canAdmin ? "" : "d-none"}" data-action="rotate-server-key" data-id="${s.id}" title="Rotate SSH key"><i class="bi bi-arrow-clockwise"></i></button>
-        <button class="btn btn-sm btn-outline-danger ${canAdmin ? "" : "d-none"}" data-action="delete-server" data-id="${s.id}" title="Deactivate"><i class="bi bi-x-circle"></i></button>
-      </td></tr>`)) : `<div class="empty-state"><i class="bi bi-hdd-network"></i><h2>Brak zasobów</h2><p>Dodaj pierwszy serwer SSH lub aplikację WWW i od razu przypisz bezpieczny dostęp.</p><button class="btn btn-primary btn-lg" data-action="open-access-wizard">Utwórz dostęp</button></div>`}`;
+    ${state.data.servers.length ? table(columns.map((column) => column.label), state.data.servers.map((server) => `<tr class="filter-row">${columns.map((column) => accessColumnCell(column.id, server, canAdmin)).join("")}</tr>`)) : `<div class="empty-state"><i class="bi bi-hdd-network"></i><h2>Brak zasobów</h2><p>Dodaj pierwszy serwer SSH lub aplikację WWW i od razu przypisz bezpieczny dostęp.</p><button class="btn btn-primary btn-lg" data-action="open-access-wizard">Utwórz dostęp</button></div>`}`;
   applyClientFilter("serverFilter", ".filter-row");
+}
+
+function selectedAccessColumns() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("pam_access_columns") || "null");
+    const ids = Array.isArray(stored) ? stored.filter((id) => accessColumnDefinitions.some((column) => column.id === id)) : defaultAccessColumnIds;
+    if (ids.length) return ids.map((id) => accessColumnDefinitions.find((column) => column.id === id));
+  } catch (_error) {}
+  return defaultAccessColumnIds.map((id) => accessColumnDefinitions.find((column) => column.id === id));
+}
+
+function accessColumnCell(columnId, server, canAdmin) {
+  const values = {
+    host: `${escapeHtml(server.display_name || server.hostname)}${server.display_name ? `<div class="small text-secondary">${escapeHtml(server.hostname)}</div>` : ""}`,
+    safe: (server.access_group_ids || []).map(serverGroupName).join(", ") || "&mdash;",
+    username: `<code>${escapeHtml(server.gateway_target_user || server.ssh_admin_user || "—")}</code>`,
+    ip: `${escapeHtml(server.ip_address)}:${server.ssh_port}`,
+    environment: escapeHtml(server.environment),
+    criticality: escapeHtml(server.criticality),
+    owner: escapeHtml(server.owner || "—"),
+    protocol: escapeHtml((server.protocol || "ssh").toUpperCase()),
+    sshSecret: secretName(server.ssh_auth_secret_id || server.secret_ref_id) || "—",
+    gatewaySecret: secretName(server.gateway_secret_ref_id) || "—",
+    rotation: server.rotation_enabled ? "on" : "off",
+    direct: server.direct_access_enabled ? "on" : "off",
+    gateway: server.gateway_enabled ? "on" : "off",
+    logging: server.command_logging_enabled ? "on" : "off",
+    recording: server.session_recording_enabled ? "on" : "off",
+    enabled: server.enabled ? "yes" : "no",
+    actions: serverActions(server, canAdmin),
+  };
+  return `<td class="${columnId === "actions" ? "text-nowrap" : ""}">${values[columnId] ?? ""}</td>`;
+}
+
+function serverActions(server, canAdmin) {
+  return `${serverAccessAction(server)}
+    <button class="btn btn-sm btn-outline-primary" data-action="test-server" data-id="${server.id}" title="Test connection"><i class="bi bi-plug"></i></button>
+    <button class="btn btn-sm btn-outline-secondary ${canAdmin ? "" : "d-none"}" data-action="edit-server" data-id="${server.id}" title="Edit"><i class="bi bi-pencil"></i></button>
+    <button class="btn btn-sm btn-outline-warning ${canAdmin ? "" : "d-none"}" data-action="rotate-server-key" data-id="${server.id}" title="Rotate SSH key"><i class="bi bi-arrow-clockwise"></i></button>
+    <button class="btn btn-sm btn-outline-danger ${canAdmin ? "" : "d-none"}" data-action="delete-server" data-id="${server.id}" title="Deactivate"><i class="bi bi-x-circle"></i></button>`;
+}
+
+function openAccessColumnsModal() {
+  const selected = new Set(selectedAccessColumns().map((column) => column.id));
+  modal("Kolumny widoku Access", `
+    <p class="text-secondary">Wybierz widoczne kolumny. Domyślny układ to HOST, SAFE, USERNAME i ACTIONS.</p>
+    <div class="row g-2">${accessColumnDefinitions.map((column) => `
+      <div class="col-sm-6"><label class="form-check border rounded p-2"><input class="form-check-input ms-0 me-2 access-column-option" type="checkbox" value="${column.id}" ${selected.has(column.id) ? "checked" : ""}><span class="form-check-label">${column.label}</span></label></div>`).join("")}</div>
+    <button id="resetAccessColumns" type="button" class="btn btn-sm btn-outline-secondary mt-3"><i class="bi bi-arrow-counterclockwise"></i> Przywróć domyślne</button>`,
+    async () => {
+      const ids = [...document.querySelectorAll(".access-column-option:checked")].map((input) => input.value);
+      if (!ids.length) throw new Error("Wybierz co najmniej jedną kolumnę");
+      localStorage.setItem("pam_access_columns", JSON.stringify(ids));
+    }
+  );
+  $("#resetAccessColumns").onclick = () => {
+    document.querySelectorAll(".access-column-option").forEach((input) => { input.checked = defaultAccessColumnIds.includes(input.value); });
+  };
+}
+
+function serverAccessAction(server) {
+  const activeGrant = state.data.grants.find((grant) => grant.server_id === server.id && grant.user_id === state.user.id && grant.status === "active" && new Date(grant.valid_to).getTime() > Date.now());
+  if (activeGrant) {
+    return `<button class="btn btn-sm btn-success" data-action="connect-access" data-id="${activeGrant.id}" title="Połącz z zasobem"><i class="bi bi-box-arrow-in-right"></i> Połącz</button>`;
+  }
+  const pendingRequest = state.data.requests.find((request) => request.server_id === server.id && request.user_id === state.user.id && request.status === "pending");
+  if (pendingRequest) {
+    return `<button class="btn btn-sm btn-outline-warning" type="button" disabled title="Request #${pendingRequest.id} oczekuje na zatwierdzenie"><i class="bi bi-hourglass-split"></i> Oczekuje</button>`;
+  }
+  return `<button class="btn btn-sm btn-primary" data-action="request-connect" data-id="${server.id}" ${server.enabled ? "" : "disabled"} title="Poproś o dostęp do zasobu"><i class="bi bi-send"></i> Request connect</button>`;
 }
 
 function secretName(id) {
@@ -958,6 +1044,22 @@ function render() {
   setTitle();
   const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, mfaSettings: renderMfaSettings, riskEvents: renderRiskEvents, alerts: renderAlerts, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit };
   (views[state.view] || renderDashboard)();
+  configureAccessPolling();
+}
+
+function configureAccessPolling() {
+  if (state.accessRefreshTimer) clearInterval(state.accessRefreshTimer);
+  state.accessRefreshTimer = null;
+  if (state.view !== "servers" || !state.token) return;
+  state.accessRefreshTimer = setInterval(async () => {
+    if (state.view !== "servers" || !state.token) return;
+    try {
+      const [requests, grants] = await Promise.all([api("/api/access-requests"), api("/api/access-grants")]);
+      state.data.requests = requests;
+      state.data.grants = grants;
+      renderServers();
+    } catch (_error) {}
+  }, 5000);
 }
 
 function formValue(id) {
@@ -970,6 +1072,7 @@ function formValue(id) {
 function modal(title, body, onSave) {
   $("#entityModalTitle").textContent = title;
   $("#entityModalBody").innerHTML = body;
+  $("#entityModalSave").textContent = "Save";
   $("#entityModalSave").onclick = async () => {
     try {
       await onSave();
@@ -1029,10 +1132,10 @@ async function handleStepUpError(err, retry = null) {
   return false;
 }
 
-function openRequestModal() {
-  modal("Request Access", `
+function openRequestModal(serverId = null) {
+  modal(serverId ? "Request connect" : "Request Access", `
     <div class="form-grid">
-      <div><label class="form-label">Server</label><select id="reqServer" class="form-select">${state.data.servers.map((s) => `<option value="${s.id}">${escapeHtml(s.hostname)} (${escapeHtml(s.environment)})</option>`).join("")}</select></div>
+      <div><label class="form-label">Server</label><select id="reqServer" class="form-select">${state.data.servers.map((s) => `<option value="${s.id}" ${s.id === serverId ? "selected" : ""}>${escapeHtml(s.display_name || s.hostname)} (${escapeHtml(s.environment)})</option>`).join("")}</select></div>
       <div><label class="form-label">Access type</label><select id="reqType" class="form-select"><option>ssh_only</option><option>limited_sudo</option><option>full_sudo</option></select></div>
       <div><label class="form-label">Duration</label><select id="reqDuration" class="form-select"><option>15</option><option>30</option><option>60</option><option>120</option><option>240</option><option>480</option></select></div>
       <div class="span-2"><label class="form-label">Reason</label><textarea id="reqReason" class="form-control" rows="3">Maintenance task</textarea></div>
@@ -1040,6 +1143,41 @@ function openRequestModal() {
     </div>`,
     () => api("/api/access-requests", { method: "POST", body: JSON.stringify({ server_id: Number(formValue("reqServer")), reason: formValue("reqReason"), requested_duration_minutes: Number(formValue("reqDuration")), requested_access_type: formValue("reqType") }) })
   );
+}
+
+function openSshConnectModal(grant) {
+  const command = connectionHint(grant);
+  $("#entityModalTitle").textContent = "Połącz przez SSH";
+  $("#entityModalBody").innerHTML = `
+    <p>Dostęp jest zatwierdzony i aktywny do <strong>${escapeHtml(fmt(grant.valid_to))}</strong>.</p>
+    <label class="form-label" for="sshConnectCommand">Polecenie SSH</label>
+    <input id="sshConnectCommand" class="form-control font-monospace" value="${escapeHtml(command)}" readonly>
+    <div class="form-text mt-2">Uruchom polecenie w swoim terminalu.</div>`;
+  const save = $("#entityModalSave");
+  save.textContent = "Kopiuj polecenie";
+  save.onclick = async () => {
+    const input = $("#sshConnectCommand");
+    input.select();
+    try {
+      if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(command);
+      else document.execCommand("copy");
+      toast("Polecenie SSH skopiowane");
+    } catch (_error) {
+      toast("Zaznacz polecenie i skopiuj je ręcznie", "warning");
+    }
+  };
+  entityModal.show();
+}
+
+async function connectAccess(grant) {
+  const server = state.data.servers.find((item) => item.id === grant.server_id);
+  if ((server?.protocol || "ssh") === "ssh") {
+    openSshConnectModal(grant);
+    return;
+  }
+  state.liveSession = await api(`/api/access-grants/${grant.id}/launch-session`, {method:"POST"});
+  state.view = "liveSession";
+  render();
 }
 
 function openServerModal(server = {}) {
@@ -1335,6 +1473,14 @@ document.body.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (action === "open-access-wizard") { window.AccessWizard?.open(); return; }
   try {
+    if (action === "access-columns") { openAccessColumnsModal(); return; }
+    if (action === "request-connect") { openRequestModal(id); return; }
+    if (action === "connect-access") {
+      const grant = state.data.grants.find((item) => item.id === id);
+      if (!grant) throw new Error("Active grant not found");
+      await connectAccess(grant);
+      return;
+    }
     if (action === "test-server") await api(`/api/servers/${id}/test-connection`, { method: "POST" });
     if (action === "edit-server") openServerModal(state.data.servers.find((x) => x.id === id));
     if (action === "rotate-server-key") await api(`/api/secret-rotation/servers/${id}/rotate-ssh-key`, { method: "POST" });
@@ -1469,6 +1615,8 @@ document.body.addEventListener("click", async (event) => {
 });
 
 function showLogin() {
+  if (state.accessRefreshTimer) clearInterval(state.accessRefreshTimer);
+  state.accessRefreshTimer = null;
   $("#loginView").classList.remove("d-none");
   $("#appView").classList.add("d-none");
 }

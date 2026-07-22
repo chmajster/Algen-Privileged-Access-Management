@@ -8,6 +8,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Added
 
+- Added a request-to-connect flow and a persistent column chooser to the Access view. Its default columns are Host, Safe, Username, and Actions.
 - Installation instructions in `README.md`.
 - Initial changelog with an `Unreleased` section for future updates.
 - Full session monitoring import flow with sessions, command history, log offsets, CSV export, manual grant log import, and UI audit views.
