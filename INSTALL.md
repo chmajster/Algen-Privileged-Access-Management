@@ -157,9 +157,11 @@ sudo ./install.sh --update --system --yes
 
 Aktualizacja:
 
-1. pobiera kod do katalogu tymczasowego;
-2. waliduje strukturę;
-3. tworzy virtualenv i instaluje zależności;
+1. pobiera kod do katalogu tymczasowego, waliduje strukturę i oblicza jego odcisk;
+2. jeśli odcisk jest zgodny z zainstalowaną wersją, kończy działanie bez
+   tworzenia virtualenv, instalowania zależności i Playwrighta, backupu oraz
+   restartu usługi;
+3. dla nowej wersji tworzy virtualenv i instaluje zależności;
 4. sprawdza importy backendu;
 5. zapamiętuje stan `active` i `enabled` usługi;
 6. tworzy backup konfiguracji i danych;

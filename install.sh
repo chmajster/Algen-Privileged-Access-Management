@@ -27,6 +27,7 @@ YES=0
 DRY_RUN=0
 VERBOSE=0
 SERVICE_CHOICE=""
+SERVICE_CHOICE_EXPLICIT=0
 DESKTOP_CHOICE=0
 DESKTOP_CHOICE_EXPLICIT=0
 AUTO_PORT=0
@@ -191,8 +192,8 @@ parse_args() {
       --user) [[ -z "$SCOPE" || "$SCOPE" == user ]] || die "Use either --user or --system."; SCOPE=user; SCOPE_EXPLICIT=1 ;;
       --system) [[ -z "$SCOPE" || "$SCOPE" == system ]] || die "Use either --user or --system."; SCOPE=system; SCOPE_EXPLICIT=1 ;;
       --install-dir) need_value "$@"; shift; INSTALL_DIR="$1"; INSTALL_DIR_EXPLICIT=1 ;;
-      --service) [[ "$SERVICE_CHOICE" != 0 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=1 ;;
-      --no-service) [[ "$SERVICE_CHOICE" != 1 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=0 ;;
+      --service) [[ "$SERVICE_CHOICE" != 0 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=1; SERVICE_CHOICE_EXPLICIT=1 ;;
+      --no-service) [[ "$SERVICE_CHOICE" != 1 ]] || die "Use either --service or --no-service."; SERVICE_CHOICE=0; SERVICE_CHOICE_EXPLICIT=1 ;;
       --desktop) DESKTOP_CHOICE=1; DESKTOP_CHOICE_EXPLICIT=1 ;;
       --no-desktop) DESKTOP_CHOICE=0; DESKTOP_CHOICE_EXPLICIT=1 ;;
       --port) need_value "$@"; shift; APP_PORT="$1"; APP_PORT_EXPLICIT=1 ;;
@@ -719,6 +720,27 @@ source_is_unchanged() {
   installed_revision="$(marker_value source_revision || true)"
   [[ -n "$installed_revision" && "$installed_revision" == "$SOURCE_REVISION" ]]
 }
+update_requests_reconfiguration() {
+  local current="" enabled=0
+  if [[ "$APP_PORT_EXPLICIT" -eq 1 || "$AUTO_PORT" -eq 1 ]]; then
+    current="$(configured_value ALGEN_PAM_PORT || true)"
+    [[ -n "$current" && "$current" == "$APP_PORT" ]] || return 0
+  fi
+  if [[ "$GATEWAY_PORT_EXPLICIT" -eq 1 ]]; then
+    current="$(configured_value PAM_GATEWAY_PORT || true)"
+    [[ -n "$current" && "$current" == "$GATEWAY_PORT" ]] || return 0
+  fi
+  if [[ "$SERVICE_CHOICE_EXPLICIT" -eq 1 ]]; then
+    enabled=0; [[ -f "$SERVICE_FILE" ]] && enabled=1
+    [[ "$enabled" -eq "$SERVICE_CHOICE" ]] || return 0
+  fi
+  if [[ "$DESKTOP_CHOICE_EXPLICIT" -eq 1 ]]; then
+    enabled=0; [[ -f "$DESKTOP_FILE" ]] && enabled=1
+    [[ "$enabled" -eq "$DESKTOP_CHOICE" ]] || return 0
+  fi
+  [[ "$ADMIN_PASSWORD_SUPPLIED" -eq 0 && "$ADMIN_PASSWORD_GENERATED" -eq 0 ]] || return 0
+  return 1
+}
 acquire_source() {
   STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/algen-pam.XXXXXX")"; STAGED_APP="$STAGE_ROOT/release"
   local local_repo="${REPO#file://}"
@@ -1053,7 +1075,7 @@ execute_install_or_update() {
   install_dependencies
   section "Pobieranie źródeł"
   acquire_source
-  if source_is_unchanged; then
+  if source_is_unchanged && ! update_requests_reconfiguration; then
     UPDATE_SKIPPED=1
     ok "Zainstalowana wersja jest aktualna. Pomijam venv, pip oraz pobieranie przeglądarek Playwright."
     return 0

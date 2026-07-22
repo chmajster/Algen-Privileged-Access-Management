@@ -88,15 +88,15 @@ class Settings(BaseSettings):
 
     @property
     def pam_gateway_enabled(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("gateway.enabled", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("gateway.enabled", False)
 
     @property
     def pam_gateway_session_recording(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.recording", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.recording", False)
 
     @property
     def pam_gateway_command_logging(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.command_logging", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.command_logging", False)
 
     @property
     def pam_gateway_idle_timeout_seconds(self) -> int:
@@ -112,7 +112,7 @@ class Settings(BaseSettings):
 
     @property
     def pam_secret_rotation_enabled(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("secret.rotation_enabled", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("secret.rotation_enabled", False)
 
     @property
     def pam_secret_rotation_interval_hours(self) -> int:
@@ -120,15 +120,15 @@ class Settings(BaseSettings):
 
     @property
     def pam_ssh_key_rotation_enabled(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("secret.ssh_key_rotation_enabled", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("secret.ssh_key_rotation_enabled", False)
 
     @property
     def pam_risk_engine_enabled(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("risk.engine_enabled", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("risk.engine_enabled", False)
 
     @property
     def pam_alerts_enabled(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("risk.alerts_enabled", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("risk.alerts_enabled", False)
 
     @property
     def pam_auto_revoke_on_critical_risk(self) -> bool:
@@ -136,15 +136,15 @@ class Settings(BaseSettings):
 
     @property
     def pam_require_reason_for_prod(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.require_reason", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.require_reason", False)
 
     @property
     def pam_require_approval_for_prod(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.require_approval", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.require_approval", False)
 
     @property
     def pam_require_session_recording_for_prod(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.recording", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.recording", False)
 
     @property
     def pam_require_mfa_for_prod(self) -> bool:
@@ -168,23 +168,23 @@ class Settings(BaseSettings):
 
     @property
     def pam_os_auto_provision(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("auth.os_auto_provision", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("auth.os_auto_provision", False)
 
     @property
     def pam_mfa_required_for_admin(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", False)
 
     @property
     def pam_mfa_required_for_full_sudo(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", False)
 
     @property
     def pam_mfa_required_for_gateway(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", False)
 
     @property
     def pam_mfa_required_for_secret_rotation(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("auth.mfa_required", False)
 
     @property
     def pam_mfa_token_ttl_seconds(self) -> int:
@@ -200,11 +200,11 @@ class Settings(BaseSettings):
 
     @property
     def pam_group_scoped_access(self) -> bool:
-        from app.policy.resolver import get_policy_value; return get_policy_value("session.group_scoped_access", True)
+        from app.policy.resolver import get_policy_value; return get_policy_value("session.group_scoped_access", False)
 
     @property
     def pam_policy_engine_enabled(self) -> bool:
-        return True
+        return False
 
     model_config = SettingsConfigDict(env_file=readable_env_file(DEFAULT_ENV_FILE), extra="ignore")
 

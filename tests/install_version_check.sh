@@ -24,6 +24,18 @@ printf 'app=algen-pam\nsource_revision=%s\ninstall_dir=%s\n' "$first_revision" "
 MODE=update
 SOURCE_REVISION="$second_revision"
 source_is_unchanged
+APP_PORT_EXPLICIT=0; GATEWAY_PORT_EXPLICIT=0; SERVICE_CHOICE_EXPLICIT=0
+DESKTOP_CHOICE_EXPLICIT=0; ADMIN_PASSWORD_SUPPLIED=0; ADMIN_PASSWORD_GENERATED=0; AUTO_PORT=0
+! update_requests_reconfiguration
+APP_PORT_EXPLICIT=1
+update_requests_reconfiguration
+CONFIG_FILE="$test_root/config.env"
+printf 'ALGEN_PAM_PORT=8080\n' >"$CONFIG_FILE"
+APP_PORT=8080
+! update_requests_reconfiguration
+APP_PORT=9090
+update_requests_reconfiguration
+APP_PORT_EXPLICIT=0
 
 printf 'changed\n' >"$second/app.txt"
 SOURCE_REVISION="$(source_fingerprint "$second")"

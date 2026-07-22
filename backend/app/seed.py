@@ -30,7 +30,7 @@ def seed_demo_data(db: Session) -> None:
                     is_active=True,
                     ssh_public_key=DEMO_SSH_KEY,
                     auth_provider="local_db",
-                    mfa_required=role == "admin",
+                    mfa_required=False,
                 )
             )
     if not db.query(User).filter(User.username == "ldap_user").first():
@@ -103,7 +103,7 @@ def seed_demo_data(db: Session) -> None:
                     category=pd.category,
                     name=pd.name,
                     description=pd.description,
-                    status="enabled",
+                    status="disabled",
                     value_json=f'"{pd.default_value}"' if pd.value_type == "string" else str(pd.default_value).lower() if pd.value_type == "boolean" else str(pd.default_value),
                     scope="global",
                     priority=100
@@ -142,10 +142,11 @@ def seed_demo_data(db: Session) -> None:
     admin = db.query(User).filter(User.username == settings.pam_default_admin_user).first()
     if admin and not db.query(AuthEvent).first():
         db.add(AuthEvent(user_id=admin.id, provider="local", event_type="login_success", success=True, message="Demo login event"))
-        db.add(AuthEvent(user_id=admin.id, provider="local", event_type="mfa_required", success=True, message="Demo MFA enrollment prompt"))
-    if admin and not db.query(MfaChallenge).filter(MfaChallenge.context == "gateway_login").first():
+        if settings.pam_mfa_enabled:
+            db.add(AuthEvent(user_id=admin.id, provider="local", event_type="mfa_required", success=True, message="Demo MFA enrollment prompt"))
+    if settings.pam_mfa_enabled and admin and not db.query(MfaChallenge).filter(MfaChallenge.context == "gateway_login").first():
         db.add(MfaChallenge(user_id=admin.id, challenge_type="step_up", context="gateway_login", status="pending", expires_at=utcnow() + timedelta(minutes=5), metadata_json='{"demo": true}'))
-    if demo_user and not db.query(StepUpSession).filter(StepUpSession.context == "demo_step_up").first():
+    if settings.pam_mfa_enabled and demo_user and not db.query(StepUpSession).filter(StepUpSession.context == "demo_step_up").first():
         db.add(StepUpSession(user_id=demo_user.id, context="demo_step_up", valid_until=utcnow() + timedelta(minutes=15)))
     db.commit()
     from app.rbac import seed_access_control

@@ -47,9 +47,6 @@ UPDATE_ARGS=(
   --silent --yes --user
   --install-dir "$INSTALL_DIR"
   --repo "$ROOT_DIR"
-  --admin-user "$OS_TEST_USER"
-  --admin-email "$OS_TEST_USER@localhost.localdomain"
-  --admin-password integration-pass
 )
 
 echo "[integration] fresh installation"
@@ -76,12 +73,12 @@ kill -0 "$FIRST_PID"
 printf '# integration-config-sentinel\n' >>"$CONFIG_FILE"
 printf 'integration-data-sentinel\n' >"$INSTALL_DIR/data/integration-sentinel"
 
-echo "[integration] automatic update of detected installation"
+echo "[integration] unchanged update is a no-op"
 bash "$INSTALLER" "${UPDATE_ARGS[@]}"
 
 [[ -f "$PID_FILE" ]]
 SECOND_PID="$(cat "$PID_FILE")"
-[[ "$SECOND_PID" != "$FIRST_PID" ]]
+[[ "$SECOND_PID" == "$FIRST_PID" ]]
 kill -0 "$SECOND_PID"
 systemctl --user is-active --quiet algen-pam.service
 systemctl --user is-enabled --quiet algen-pam.service
@@ -93,7 +90,7 @@ grep -q '^integration-data-sentinel$' "$INSTALL_DIR/data/integration-sentinel"
 [[ "$(stat -c '%a' "$INSTALL_DIR/data")" == 700 ]]
 grep -q '^app=algen-pam$' "$INSTALL_DIR/.algen-pam-install"
 grep -Fqx "install_dir=$INSTALL_DIR" "$INSTALL_DIR/.algen-pam-install"
-find "$TEST_HOME/.config/algen-pam/backups" -type f -name env -print -quit | grep . >/dev/null
+[[ ! -d "$TEST_HOME/.config/algen-pam/backups" ]]
 grep -q "ExecStart=.*--host 0.0.0.0 --port $APP_PORT" "$SERVICE_FILE"
 grep -q 'ExecStart=.*/bin/python -m uvicorn ' "$SERVICE_FILE"
 grep -q '^NoNewPrivileges=true$' "$SERVICE_FILE"

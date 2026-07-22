@@ -26,6 +26,8 @@ The format follows Keep a Changelog, and this project uses semantic versioning w
 
 ### Changed
 
+- MFA and seeded policy rules are disabled by default for new installations; existing explicitly configured policy records are preserved during updates.
+- Updates now compare a stored source fingerprint and skip virtualenv, pip, Playwright browser installation, backup, deployment, and service restart when no new application version is available.
 - Translated installation instructions in `README.md` to Polish.
 - Access request, approval, gateway, command logging, and secret-use flows now persist policy decisions and risk metadata.
 - Login, gateway access, secret rotation, manual revoke, recording access, exports, and security policy changes can require MFA step-up according to configuration.

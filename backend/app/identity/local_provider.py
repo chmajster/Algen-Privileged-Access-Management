@@ -142,7 +142,7 @@ def _provision_os_user(db: DBSession, username: str, account) -> User:
         external_id=f"uid:{account.pw_uid}",
         display_name=(account.pw_gecos or username).split(",", 1)[0],
         email_verified=False,
-        mfa_required=_is_os_admin(username),
+        mfa_required=False,
     )
     db.add(user)
     db.flush()
@@ -174,7 +174,6 @@ def authenticate_local_os(db: DBSession, username: str, password: str) -> tuple[
         user.display_name = user.display_name or (account.pw_gecos or username).split(",", 1)[0]
         if _is_os_admin(username):
             user.role = "admin"
-            user.mfa_required = True
     return user, [{"name": "linux-local", "source": "pam"}]
 
 
