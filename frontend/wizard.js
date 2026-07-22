@@ -21,20 +21,58 @@
 
   const wizard = {
     root: null, mode: null, resourceType: null, preset: null, step: 0, draftId: null,
-    data: {}, presets: {}, secretInputs: {}, checks: [], discovery: null, pickerRole: "username", saveTimer: null,
+    data: {}, presets: {}, secretInputs: {}, checks: [], discovery: null, pickerRole: "username", saveTimer: null, resumeNotice: "", completionKey: null, restoreUnavailable: false,
 
-    async open() {
+    async open({resume = true} = {}) {
       const pam = window.PAM; if (!pam) return;
+      if (this.root) return;
       this.reset();
       this.root = document.createElement("section"); this.root.id = "accessWizard"; this.root.className = "access-wizard";
       document.body.appendChild(this.root); document.body.classList.add("wizard-open");
       try { this.presets = await pam.api("/api/access-wizard/presets"); } catch (_) { this.presets = {}; }
+      if (resume && await this.restoreState()) { this.render(); return; }
+      if (this.restoreUnavailable) { this.root.remove(); this.root = null; document.body.classList.remove("wizard-open"); return; }
       if (pam.state().user.role !== "admin") { this.mode = "request_access"; this.step = 1; await this.ensureDraft(); }
       this.render();
     },
 
-    reset() { this.mode = this.resourceType = this.preset = null; this.step = 0; this.draftId = null; this.data = {}; this.secretInputs = {}; this.checks = []; this.discovery = null; this.pickerRole = "username"; },
-    close() { clearTimeout(this.saveTimer); this.root?.remove(); this.root = null; document.body.classList.remove("wizard-open"); this.secretInputs = {}; },
+    reset() { this.mode = this.resourceType = this.preset = null; this.step = 0; this.draftId = null; this.data = {}; this.secretInputs = {}; this.checks = []; this.discovery = null; this.pickerRole = "username"; this.resumeNotice = ""; this.completionKey = null; this.restoreUnavailable = false; },
+    storageKey() { return `pam_access_wizard:${this.pam?.state().user?.id || "anonymous"}`; },
+    persistState() {
+      if (!this.draftId) return;
+      try { localStorage.setItem(this.storageKey(), JSON.stringify({draftId:this.draftId,mode:this.mode,resourceType:this.resourceType,step:this.step,data:this.safeData(),completionKey:this.completionKey})); } catch (_) {}
+    },
+    clearPersistedState() { try { localStorage.removeItem(this.storageKey()); } catch (_) {} },
+    async restoreState() {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem(this.storageKey()) || "null"); } catch (_) { this.clearPersistedState(); return false; }
+      if (!saved?.draftId) return false;
+      let draft;
+      try {
+        draft = await this.pam.api(`/api/access-wizard/drafts/${saved.draftId}`);
+      } catch (error) {
+        if ([404,410].includes(error.status)) this.clearPersistedState();
+        else { this.restoreUnavailable = true; this.pam.toast("Nie udało się przywrócić kreatora. Lokalny stan został zachowany.", "warning"); }
+        return false;
+      }
+      this.draftId = draft.id; this.mode = draft.mode; this.resourceType = draft.resource_type; this.completionKey = saved.completionKey || null;
+      this.data = saved.draftId === draft.id && saved.data ? saved.data : draft.data;
+      const completed = draft.completed_steps || [];
+      this.step = Math.max(1, Math.min(this.steps.length, Number(saved.step) || (completed.length ? Math.max(...completed) + 1 : 1)));
+      const needsSecretReentry = Object.entries(this.data.connection || {}).some(([key,value]) => key.endsWith("_input_key") && value);
+      if (needsSecretReentry && this.step > 4) this.step = 4;
+      this.resumeNotice = needsSecretReentry ? "Przywrócono kreator po przeładowaniu. Ze względów bezpieczeństwa wpisz ponownie wartości nowych sekretów." : "Przywrócono kreator po przeładowaniu strony.";
+      this.persistState();
+      try { await this.save(); } catch (_) {}
+      return true;
+    },
+    async resumeAfterReload() {
+      if (this.root) return;
+      let hasSavedState = false;
+      try { hasSavedState = !!localStorage.getItem(this.storageKey()); } catch (_) {}
+      if (hasSavedState) await this.open({resume:true});
+    },
+    close() { clearTimeout(this.saveTimer); this.clearPersistedState(); this.root?.remove(); this.root = null; document.body.classList.remove("wizard-open"); this.secretInputs = {}; },
     get steps() { return this.mode === "request_access" ? REQUEST_STEPS : ADMIN_STEPS; },
     get pam() { return window.PAM; },
     field(path, fallback = "") { let value = this.data; for (const part of path.split(".")) value = value?.[part]; return value ?? fallback; },
@@ -44,7 +82,7 @@
       this.mode = mode; this.step = 1;
       if (mode === "create_resource") this.data = {resource:{environment:"prod",criticality:"medium",enabled:true,tags:[]},connection:{},access_profile:{allowed_durations:[30,60]},policy:{},assignments:[defaultAdminAssignment()]};
       else this.data = {assignments:[defaultAdminAssignment()],policy:{maximum_duration_minutes:60},access_profile:{allowed_durations:[30,60]}};
-      await this.ensureDraft(); this.render();
+      await this.ensureDraft(); this.persistState(); this.render();
     },
 
     async choosePreset(key) {
@@ -58,13 +96,15 @@
       if (this.draftId) return;
       const result = await this.pam.api("/api/access-wizard/drafts", {method:"POST", body:JSON.stringify({mode:this.mode,resource_type:this.resourceType,data:this.data})});
       this.draftId = result.id;
+      this.persistState();
     },
 
     safeData() { return clone(this.data); },
-    scheduleSave() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.save().catch((error) => this.showError(error.message)), 450); this.setSaveStatus("Zapisywanie…"); },
+    scheduleSave() { this.persistState(); clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.save().catch((error) => this.showError(error.message)), 450); this.setSaveStatus("Zapisywanie…"); },
     async save() {
       await this.ensureDraft();
       await this.pam.api(`/api/access-wizard/drafts/${this.draftId}`, {method:"PATCH", body:JSON.stringify({mode:this.mode,resource_type:this.resourceType,data:this.safeData(),completed_steps:Array.from({length:Math.max(0,this.step-1)},(_,i)=>i+1)})});
+      this.persistState();
       this.setSaveStatus("Zapisano bez sekretów");
     },
 
@@ -78,7 +118,7 @@
 
     render() {
       if (!this.root) return;
-      this.root.innerHTML = `${this.header()}<main class="wizard-main"><div id="wizardErrors"></div>${this.step ? this.stepContent() : this.modeContent()}</main>${this.step ? this.footer() : ""}`;
+      this.root.innerHTML = `${this.header()}<main class="wizard-main"><div id="wizardErrors">${this.resumeNotice?`<div class="alert alert-info">${esc(this.resumeNotice)}</div>`:""}</div>${this.step ? this.stepContent() : this.modeContent()}</main>${this.step ? this.footer() : ""}`;
       this.bind();
     },
 
@@ -209,7 +249,7 @@
       this.root.querySelectorAll("[data-mode]").forEach(el=>el.onclick=()=>this.chooseMode(el.dataset.mode));
       this.root.querySelectorAll("[data-preset]").forEach(el=>el.onclick=()=>this.choosePreset(el.dataset.preset));
       this.root.querySelectorAll("[data-custom-type]").forEach(el=>el.onclick=()=>{this.resourceType=el.dataset.customType;this.scheduleSave();this.render()});
-      this.root.querySelectorAll("[data-jump]").forEach(el=>el.onclick=()=>{this.step=Number(el.dataset.jump);this.render()});
+      this.root.querySelectorAll("[data-jump]").forEach(el=>el.onclick=()=>{this.step=Number(el.dataset.jump);this.persistState();this.render()});
       this.root.querySelectorAll("[data-bind]").forEach(el=>{
         const update=()=>{let value=el.type==="checkbox"?el.checked:el.type==="number"?Number(el.value):el.value;if(el.dataset.bind.endsWith("_text")){const path=el.dataset.bind.slice(0,-5);this.set(path,el.value.split(",").map(v=>v.trim()).filter(Boolean));if(path==="connection.allowed_domains")this.data._domain_manually_edited=true;}else{this.set(el.dataset.bind,value);if(el.dataset.bind==="resource.name")this.data._name_manually_edited=true;}if(el.dataset.bind==="connection.start_url")this.deriveDomain(value);if(el.dataset.bind==="connection.hostname"&&!this.field("resource.name"))this.set("resource.name",value.split(".")[0]);if(el.dataset.bind==="resource.criticality"&&["high","critical"].includes(value))this.set("policy.require_recording",true);if(el.dataset.bind==="assignment_role"){this.data.assignments=(this.data.assignments||[]).filter(a=>a.subject_type!=="role");if(value)this.data.assignments.push({subject_type:"role",subject_identifier:value,assignment_mode:this.field("assignment_mode","request_required")})}if(el.dataset.bind==="assignment_mode")this.data.assignments=(this.data.assignments||[]).map(a=>({...a,assignment_mode:value}));this.validateField(el);this.scheduleSave();if(el.dataset.bind==="connection.authentication_type"||el.dataset.bind.endsWith("_secret_id"))this.render()}; el.oninput=update;el.onchange=update;
       });
@@ -268,13 +308,13 @@
 
     async action(name) {
       try {
-        if(name==="close"){this.close();return} if(name==="back"){this.step--;this.render();return}
+        if(name==="close"){this.close();return} if(name==="back"){this.step--;this.persistState();this.render();return}
         if(name==="discover"){await this.discover();return} if(name==="test"){await this.testConnection();return}
         if(name==="next"){
           if(this.mode==="create_resource"&&this.step===1&&!this.resourceType){this.showError("Wybierz preset lub konfigurację niestandardową");return}
           if(this.mode==="assign_existing_resource"&&this.step===1&&!this.field("resource_id")){this.showError("Wybierz istniejący zasób");return}
           if(this.mode==="request_access"){const required=["resource_id","access_group_id","duration_minutes","justification"][this.step-1];if(!this.field(required)){this.showError("Uzupełnij wymagane dane");return}}
-          await this.save(); const validation=await this.pam.api("/api/access-wizard/validate-step",{method:"POST",body:JSON.stringify({mode:this.mode,resource_type:this.resourceType,step:this.mode==="request_access"?(this.step===4?8:this.step+1):this.step,data:this.data})});if(!validation.valid){this.showError("Popraw dane przed przejściem dalej",validation.errors);return}this.step++;this.render();return;
+          await this.save(); const validation=await this.pam.api("/api/access-wizard/validate-step",{method:"POST",body:JSON.stringify({mode:this.mode,resource_type:this.resourceType,step:this.mode==="request_access"?(this.step===4?8:this.step+1):this.step,data:this.data})});if(!validation.valid){this.showError("Popraw dane przed przejściem dalej",validation.errors);return}this.step++;this.resumeNotice="";this.persistState();this.render();return;
         }
         if(name==="complete")await this.complete();
       } catch(error){
@@ -297,7 +337,8 @@
 
     async complete() {
       if(this.mode==="request_access"&&String(this.field("justification","")).trim().length<10){this.showError("Uzasadnienie musi mieć co najmniej 10 znaków");return}
-      await this.save(); const result=await this.pam.api("/api/access-wizard/complete",{method:"POST",body:JSON.stringify({draft_id:this.draftId,submission_key:submissionKey(),secret_inputs:this.transientSecrets(),accept_warnings:false})});
+      await this.save(); this.completionKey ||= submissionKey(); this.persistState(); const result=await this.pam.api("/api/access-wizard/complete",{method:"POST",body:JSON.stringify({draft_id:this.draftId,submission_key:this.completionKey,secret_inputs:this.transientSecrets(),accept_warnings:false})});
+      this.clearPersistedState();
       this.secretInputs={};this.root.querySelector(".wizard-main").innerHTML=`<div class="wizard-success"><i class="bi bi-check-circle"></i><h2>${this.mode==="request_access"?"Wniosek został wysłany":"Dostęp został utworzony"}</h2><p>Identyfikator: ${esc(result.request_id||result.server_id)}</p>${result.safe_name?`<p>Safe: <strong>${esc(result.safe_name)}</strong></p>`:""}<button class="btn btn-primary" data-wizard="finish">Wróć do PAM</button></div>`;this.root.querySelector("[data-wizard=finish]").onclick=async()=>{this.close();await this.pam.refresh()};
     }
   };

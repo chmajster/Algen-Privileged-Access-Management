@@ -98,6 +98,7 @@ async function api(path, options = {}) {
     const detail = body.detail || body.message || `HTTP ${res.status}`;
     const err = new Error(typeof detail === "string" ? detail : detail.message || detail.code || `HTTP ${res.status}`);
     err.detail = detail;
+    err.status = res.status;
     throw err;
   }
   const type = res.headers.get("content-type") || "";
@@ -713,11 +714,11 @@ function renderPolicyDetails(insts) {
             <div class="mb-3">
               <label class="form-label">Scope Type</label>
               <select class="form-select" id="pol_scope_type" onchange="document.getElementById('targetDiv').style.display = this.value === 'global' ? 'none' : 'block';">
-                ${['global', 'user', 'group', 'resource', 'resource_type', 'protocol', 'gateway'].map(s => `<option value="${s}" ${i.scope_type === s ? 'selected' : ''}>${s}</option>`).join('')}
+                ${['global', 'user', 'group', 'resource', 'resource_type', 'protocol', 'gateway'].map(s => `<option value="${s}" ${i.scope === s ? 'selected' : ''}>${s}</option>`).join('')}
               </select>
             </div>
             
-            <div class="mb-3" id="targetDiv" style="display: ${i.scope_type === 'global' ? 'none' : 'block'};">
+            <div class="mb-3" id="targetDiv" style="display: ${i.scope === 'global' ? 'none' : 'block'};">
               <label class="form-label">Scope Target</label>
               <input type="text" class="form-control" id="pol_scope_target" value="${escapeHtml(i.scope_target || '')}" placeholder="e.g. prod, admin-group, ssh" list="scope-targets-list">
               <datalist id="scope-targets-list">
@@ -754,7 +755,7 @@ function renderPolicyDetails(insts) {
     <div class="p-0 flex-grow-1" style="overflow-y: auto;">
       <div class="p-3 border-bottom d-flex justify-content-between align-items-center bg-light">
         <span class="fw-bold fs-6">Configured Rules</span>
-        <button class="btn btn-sm btn-primary" onclick="selectedPolicyInst={scope_type: 'global', status: 'enabled'}; renderPolicies();"><i class="bi bi-plus-lg"></i> Add Rule</button>
+        <button class="btn btn-sm btn-primary" onclick="selectedPolicyInst={scope: 'global', status: 'enabled'}; renderPolicies();"><i class="bi bi-plus-lg"></i> Add Rule</button>
       </div>
       <div class="list-group list-group-flush">
         ${policyInsts.map(i => `
@@ -763,7 +764,7 @@ function renderPolicyDetails(insts) {
               <span class="badge ${i.status === 'enabled' ? 'bg-success' : 'bg-secondary'}">${i.status}</span>
               <span class="badge bg-info text-dark">Priority: ${i.priority}</span>
             </div>
-            <div class="mb-2"><strong>Scope:</strong> ${i.scope_type === 'global' ? 'Global' : `${i.scope_type} = ${escapeHtml(i.scope_target)}`}</div>
+            <div class="mb-2"><strong>Scope:</strong> ${i.scope === 'global' ? 'Global' : `${i.scope} = ${escapeHtml(i.scope_target)}`}</div>
             <div class="mb-2"><strong>Value:</strong> <code>${escapeHtml(i.value_json)}</code></div>
             ${i.description ? `<div class="text-muted small"><em>${escapeHtml(i.description)}</em></div>` : ''}
           </button>
@@ -802,15 +803,17 @@ async function savePolicyInst() {
   }
 
   try {
+    let savedPolicy;
     if (id) {
-      await api(`/api/policies/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      savedPolicy = await api(`/api/policies/${id}`, { method: "PUT", body: JSON.stringify(payload) });
       toast("Rule updated", "success");
     } else {
-      await api("/api/policies", { method: "POST", body: JSON.stringify(payload) });
+      savedPolicy = await api("/api/policies", { method: "POST", body: JSON.stringify(payload) });
       toast("Rule created", "success");
     }
-    selectedPolicyInst = null;
-    await refresh();
+    await refresh(false);
+    selectedPolicyInst = (state.data.policies || []).find((item) => item.id === savedPolicy.id) || savedPolicy;
+    renderPolicies();
   } catch (err) {
     if (!await handleStepUpError(err, savePolicyInst)) {
       toast(err.message, "danger");
@@ -953,7 +956,7 @@ function renderSettings() {
 function render() {
   renderNav();
   setTitle();
-  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, riskEvents: renderRiskEvents, alerts: renderAlerts, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit };
+  const views = { dashboard: renderDashboard, adminPanel: renderAdminPanel, servers: renderServers, accessGroups: renderAccessGroups, users: renderUsers, requests: renderRequests, grants: renderGrants, sessions: renderSessions, sessionDetails: renderSessionDetails, liveSession: renderLiveSession, replay: renderReplay, commands: renderCommands, gateway: renderGateway, secrets: renderSecrets, secretDetails: renderSecretDetails, secretRotation: renderSecretRotation, policies: renderPolicies, mfaSettings: renderMfaSettings, riskEvents: renderRiskEvents, alerts: renderAlerts, identityAdmin: renderIdentityAdmin, authEvents: renderAuthEvents, audit: renderAudit };
   (views[state.view] || renderDashboard)();
 }
 
@@ -994,13 +997,30 @@ function openStepUpModal(context, reason, retry = null) {
   );
 }
 
+async function openMfaEnrollmentModal(context, reason, retry = null) {
+  const enrollment = await api("/api/mfa/enroll/start", { method: "POST" });
+  modal("MFA enrollment", `
+    <div class="alert alert-warning">${escapeHtml(reason || "MFA enrollment is required before saving this policy")}</div>
+    <p class="mb-2"><strong>Provisioning URI</strong></p>
+    <p class="wrap"><code>${escapeHtml(enrollment.provisioning_uri)}</code></p>
+    <p class="mb-2"><strong>Manual secret</strong></p>
+    <p><code>${escapeHtml(enrollment.secret)}</code></p>
+    <div><label class="form-label">TOTP code</label><input id="mfaEnrollCode" class="form-control" autocomplete="one-time-code"></div>`,
+    async () => {
+      const code = formValue("mfaEnrollCode");
+      await api("/api/mfa/enroll/verify", { method: "POST", body: JSON.stringify({ code, challenge_id: enrollment.challenge_id }) });
+      const challenge = await api("/api/mfa/step-up", { method: "POST", body: JSON.stringify({ context, reason }) });
+      await api("/api/mfa/verify", { method: "POST", body: JSON.stringify({ challenge_id: challenge.id, code, recovery_code: false }) });
+      if (retry) await retry();
+    }
+  );
+}
+
 async function handleStepUpError(err, retry = null) {
   const detail = err.detail;
   if (detail && typeof detail === "object" && ["step_up_required", "mfa_enrollment_required"].includes(detail.code)) {
     if (detail.code === "mfa_enrollment_required") {
-      toast(detail.message || "MFA enrollment required", "warning");
-      state.view = "mfaSettings";
-      render();
+      await openMfaEnrollmentModal(detail.context, detail.message, retry);
       return true;
     }
     openStepUpModal(detail.context, detail.message, retry);
@@ -1459,6 +1479,7 @@ async function showApp() {
   $("#loginView").classList.add("d-none");
   $("#appView").classList.remove("d-none");
   await refresh();
+  await window.AccessWizard?.resumeAfterReload();
 }
 
 function updateLoginProviderFields() {
