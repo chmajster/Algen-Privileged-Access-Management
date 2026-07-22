@@ -9,6 +9,15 @@
     return env && custom ? `${env}-ENV-CUSTOM-${custom}` : "";
   };
   const defaultAdminAssignment = () => ({subject_type:"role",subject_identifier:"admin",assignment_mode:"request_required"});
+  const submissionKey = () => {
+    const webCrypto = window.crypto;
+    if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+    if (typeof webCrypto?.getRandomValues === "function") {
+      const bytes = new Uint8Array(16); webCrypto.getRandomValues(bytes);
+      return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  };
 
   const wizard = {
     root: null, mode: null, resourceType: null, preset: null, step: 0, draftId: null,
@@ -288,7 +297,7 @@
 
     async complete() {
       if(this.mode==="request_access"&&String(this.field("justification","")).trim().length<10){this.showError("Uzasadnienie musi mieć co najmniej 10 znaków");return}
-      await this.save(); const result=await this.pam.api("/api/access-wizard/complete",{method:"POST",body:JSON.stringify({draft_id:this.draftId,submission_key:crypto.randomUUID(),secret_inputs:this.transientSecrets(),accept_warnings:false})});
+      await this.save(); const result=await this.pam.api("/api/access-wizard/complete",{method:"POST",body:JSON.stringify({draft_id:this.draftId,submission_key:submissionKey(),secret_inputs:this.transientSecrets(),accept_warnings:false})});
       this.secretInputs={};this.root.querySelector(".wizard-main").innerHTML=`<div class="wizard-success"><i class="bi bi-check-circle"></i><h2>${this.mode==="request_access"?"Wniosek został wysłany":"Dostęp został utworzony"}</h2><p>Identyfikator: ${esc(result.request_id||result.server_id)}</p>${result.safe_name?`<p>Safe: <strong>${esc(result.safe_name)}</strong></p>`:""}<button class="btn btn-primary" data-wizard="finish">Wróć do PAM</button></div>`;this.root.querySelector("[data-wizard=finish]").onclick=async()=>{this.close();await this.pam.refresh()};
     }
   };
